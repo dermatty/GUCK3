@@ -1,7 +1,7 @@
 #!/home/stephan/.virtualenvs/g3/bin/python
 
-import cv2
+import guck.__main__
 
-print("started ...")
+exitcode = guck.__main__.run()
+print("guck exited with return code:", exitcode)
 
-print("... done!")
