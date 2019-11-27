@@ -17,24 +17,20 @@ def startup_cams(camera_config, mp_loggerqueue, logger):
         mpp_cam = mp.Process(target=mpcam.run_cam, args=(c, child_pipe, mp_loggerqueue, ))
         mpp_cams.append((c["name"], mpp_cam, parent_pipe, child_pipe))
         mpp_cam.start()
+        logger.debug(whoami() + "camera " + c["name"] + " started!")
     return mpp_cams
 
 
 def stop_cams(mpp_cams, logger):
     for c in mpp_cams:
-        cname, mpp_cam, parent_pipe, child_pipe = c
-        ret = stop_cam(c, mpp_cams)
-        if ret == 1:
-            logger.info(whoami() + "camera " + cname + "stopped!")
-        else:
-            logger.error(whoami() + "camera " + cname + "cannot be stopped!")
+        stop_cam(c, mpp_cams, logger)
 
 
-def stop_cam(c, mpp_cams):
+def stop_cam(c, mpp_cams, logger):
     try:
         i = mpp_cams.index(c)
     except Exception as e:
-        print(str(e))
+        logger.warning(whoami() + str(e) + "cannot stop cam!")
         return -1
     cname, mpp_cam, parent_pipe, child_pipe = c
     parent_pipe.send("stop")
@@ -43,6 +39,7 @@ def stop_cam(c, mpp_cams):
     if mpp_cam.is_alive():
         os.kill(mpp_cam.pid, signal.SIGKILL)
     mpp_cams[i] = cname, None, parent_pipe, child_pipe
+    logger.debug(whoami() + "camera " + cname + " stopped!")
     return 1
 
 
@@ -53,6 +50,7 @@ def destroy_all_cam_windows(mpp_cams):
 
 def g3_main(cfg, mp_loggerqueue):
     setproctitle("g3." + os.path.basename(__file__))
+
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
 
@@ -104,4 +102,4 @@ def g3_main(cfg, mp_loggerqueue):
         time.sleep(0.05)
 
     cv2.destroyAllWindows()
-    logger.info(whoami() + "exiting ...")
+    logger.info(whoami() + "... exited!")

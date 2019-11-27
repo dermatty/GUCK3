@@ -32,7 +32,7 @@ class Matcher:
 
 
 def run_cam(cfg, child_pipe, mp_loggerqueue):
-    setproctitle("g3." + os.path.basename(__file__))
+    setproctitle("g3." + cfg["name"] + "_" + os.path.basename(__file__))
 
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
@@ -42,6 +42,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     # cam_is_ok = tm.waitforcaption()
 
     terminated = False
+
     while not terminated:
         cmd = child_pipe.recv()
         if cmd == "stop":
@@ -53,5 +54,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
 
     if tm.CAP:
         tm.CAP.release()
-    print(tm.NAME + " exited!")
+
+    logger.info(whoami() + "... exited!")
+
 
