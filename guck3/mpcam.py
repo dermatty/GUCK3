@@ -4,6 +4,23 @@ from guck3.mplogging import whoami
 from guck3 import mplogging
 import os
 import time
+import signal
+
+
+TERMINATED = False
+
+
+class SigHandler_mpcam:
+    def __init__(self, logger):
+        self.logger = logger
+
+    def sighandler_mpcam(self, a, b):
+        self.shutdown()
+
+    def shutdown(self):
+        global TERMINATED
+        TERMINATED = True
+        self.logger.debug(whoami() + "got signal, terminating")
 
 
 class Matcher:
@@ -32,18 +49,22 @@ class Matcher:
 
 
 def run_cam(cfg, child_pipe, mp_loggerqueue):
+    global TERMINATED
+
     setproctitle("g3." + cfg["name"] + "_" + os.path.basename(__file__))
 
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
 
+    sh = SigHandler_mpcam(logger)
+    signal.signal(signal.SIGINT, sh.sighandler_mpcam)
+    signal.signal(signal.SIGTERM, sh.sighandler_mpcam)
+
     tm = Matcher(cfg)
 
     # cam_is_ok = tm.waitforcaption()
 
-    terminated = False
-
-    while not terminated:
+    while not TERMINATED:
         cmd = child_pipe.recv()
         if cmd == "stop":
             child_pipe.send(("stopped!", None))

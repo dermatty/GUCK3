@@ -6,6 +6,15 @@ import traceback
 import inspect
 from setproctitle import setproctitle
 import os
+import signal
+
+
+class SigHandler_ll:
+    def __init__(self):
+        pass
+
+    def sighandler_ll(self, a, b):
+        pass
 
 
 def whoami():
@@ -16,6 +25,9 @@ def whoami():
 
 def logging_listener(queue, level, filename):
     setproctitle("g3.loglistener.py")
+    sh = SigHandler_ll()
+    signal.signal(signal.SIGINT, sh.sighandler_ll)
+    signal.signal(signal.SIGTERM, sh.sighandler_ll)
     # root = logging.getLogger()
     h = logging.FileHandler(filename, mode="w")
     f = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')

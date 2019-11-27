@@ -16,12 +16,14 @@ __version__ = "0.1"
 
 
 class SigHandler_g3:
-    def __init__(self, mp_loggerqueue, mp_loglistener, logger):
+    def __init__(self, mp_loggerqueue, mp_loglistener, mp_pd, old_sys_stdout, logger):
         self.logger = logger
+        self.mp_pd = mp_pd
         self.mp_loggerqueue = mp_loggerqueue
         self.mp_loglistener = mp_loglistener
+        self.old_sys_stdout = old_sys_stdout
 
-    def sighandler_ginzibix(self, a, b):
+    def sighandler_g3(self, a, b):
         self.shutdown(1)
 
     def get_trstr(self, exit_status):
@@ -33,6 +35,12 @@ class SigHandler_g3:
 
     def shutdown(self, exit_status=3):
         trstr = self.get_trstr(exit_status)
+        if self.mp_pd:
+            if self.mp_pd.pid:
+                print(trstr + "joining peopledetection ...")
+                self.mp_pd.join()
+                print(self.get_trstr(exit_status) + "peopledetection exited!")
+        trstr = self.get_trstr(exit_status)
         if self.mp_loglistener:
             if self.mp_loglistener.pid:
                 print(trstr + "joining loglistener ...")
@@ -42,6 +50,9 @@ class SigHandler_g3:
                     print(trstr + "killing loglistener")
                     os.kill(self.mp_loglistener.pid, signal.SIGKILL)
                 print(self.get_trstr(exit_status) + "loglistener exited!")
+        if sys.stdout != self.old_sys_stdout:
+            sys.stdout = self.old_sys_stdout
+        sys.exit()
 
 
 class GControl:
@@ -328,13 +339,11 @@ def run():
     logger.debug(whoami() + "starting with loglevel '" + loglevel_str + "'")
     logger.info(whoami() + "Welcome to GUCK3 " + __version__)
 
-    # init sighandler
-    sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, logger)
-    signal.signal(signal.SIGINT, sh.sighandler_ginzibix)
-    signal.signal(signal.SIGTERM, sh.sighandler_ginzibix)
-
-    # start peopledetection
+    # start peopledetection & sighandler
     mpp_peopledetection = mp.Process(target=peopledetection.g3_main, args=(cfg, mp_loggerqueue, ))
+    sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, mpp_peopledetection, old_sys_stdout, logger)
+    signal.signal(signal.SIGINT, sh.sighandler_g3)
+    signal.signal(signal.SIGTERM, sh.sighandler_g3)
     mpp_peopledetection.start()
     mpp_peopledetection.join()
 

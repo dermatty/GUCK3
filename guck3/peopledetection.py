@@ -7,6 +7,23 @@ import cv2
 import multiprocessing as mp
 import signal
 
+TERMINATED = False
+
+
+class SigHandler_pd:
+    def __init__(self, mpp_cams, logger):
+        self.logger = logger
+        self.mpp_cams = mpp_cams
+
+    def sighandler_pd(self, a, b):
+        self.shutdown()
+
+    def shutdown(self):
+        global TERMINATED
+        TERMINATED = True
+        stop_cams(self.mpp_cams, self.logger)
+        self.logger.debug(whoami() + "got signal, exiting ...")
+
 
 def startup_cams(camera_config, mp_loggerqueue, logger):
     mpp_cams = []
@@ -22,8 +39,11 @@ def startup_cams(camera_config, mp_loggerqueue, logger):
 
 
 def stop_cams(mpp_cams, logger):
+    if not mpp_cams:
+        return
     for c in mpp_cams:
         stop_cam(c, mpp_cams, logger)
+    mpp_cams = None
 
 
 def stop_cam(c, mpp_cams, logger):
@@ -49,10 +69,16 @@ def destroy_all_cam_windows(mpp_cams):
 
 
 def g3_main(cfg, mp_loggerqueue):
+    global TERMINATED
     setproctitle("g3." + os.path.basename(__file__))
 
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
+
+    mpp_cams = None
+    sh = SigHandler_pd(mpp_cams, logger)
+    signal.signal(signal.SIGINT, sh.sighandler_pd)
+    signal.signal(signal.SIGTERM, sh.sighandler_pd)
 
     camera_config = get_camera_config(cfg)
 
@@ -61,9 +87,8 @@ def g3_main(cfg, mp_loggerqueue):
     print("    s to start video capture")
     print("    e to end video capture")
     capture_active = False
-    mpp_cams = None
 
-    while True:
+    while not TERMINATED:
 
         if capture_active:
             for c in mpp_cams:
@@ -86,9 +111,11 @@ def g3_main(cfg, mp_loggerqueue):
         if capture_active:
             if ch == 27 or ch == ord("q"):
                 stop_cams(mpp_cams, logger)
+                sh.mpp_cams = None
                 break
             elif ch == ord("e"):
                 stop_cams(mpp_cams, logger)
+                sh.mpp_cams = None
                 destroy_all_cam_windows(mpp_cams)
                 capture_active = False
         else:
@@ -97,6 +124,7 @@ def g3_main(cfg, mp_loggerqueue):
             elif ch == ord("s"):
                 cv2.destroyWindow("Messi")
                 mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
+                sh.mpp_cams = mpp_cams
                 capture_active = True
 
         time.sleep(0.05)
