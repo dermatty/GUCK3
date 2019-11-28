@@ -1,7 +1,7 @@
 import os
 from setproctitle import setproctitle
 from guck3.mplogging import whoami
-from guck3 import mplogging, get_camera_config, mpcam
+from guck3 import mplogging, get_camera_config, mpcam, mpcommunicator
 import time
 import cv2
 import multiprocessing as mp
@@ -80,6 +80,10 @@ def g3_main(cfg, mp_loggerqueue):
     signal.signal(signal.SIGINT, sh.sighandler_pd)
     signal.signal(signal.SIGTERM, sh.sighandler_pd)
 
+    # spawn mpcommunicator
+    mpp_comm = mp.Process(target=mpcommunicator.run_mpcommunicator, args=(cfg, mp_loggerqueue, ))
+    mpp_comm.start()
+
     camera_config = get_camera_config(cfg)
 
     print("Press")
@@ -130,4 +134,6 @@ def g3_main(cfg, mp_loggerqueue):
         time.sleep(0.05)
 
     cv2.destroyAllWindows()
+    os.kill(mpp_comm.pid, signal.SIGTERM)
+    mpp_comm.join()
     logger.info(whoami() + "... exited!")
