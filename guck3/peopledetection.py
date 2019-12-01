@@ -108,7 +108,9 @@ def g3_main(cfg, mp_loggerqueue):
 
     while not TERMINATED:
 
-        if capture_active:
+        if not capture_active:
+            time.sleep(0.05)
+        else:
             for c in mpp_cams:
                 if not c[1]:
                     continue
@@ -120,11 +122,7 @@ def g3_main(cfg, mp_loggerqueue):
                     stop_cam(c, mpp_cams)
                     cv2.destroyWindow(c[0])
                     # restart / Meldung
-        else:
-            image = cv2.imread(os.getcwd() + "/guck3/data/messi.jpg")
-            cv2.imshow("Messi", image)
-
-        cv2.waitKey(1) & 0xFF
+            cv2.waitKey(1) & 0xFF
 
         # telegram handler
         if tgram_active:
@@ -134,7 +132,7 @@ def g3_main(cfg, mp_loggerqueue):
                     if tgram_cmd == "exit":
                         stop_cams(mpp_cams, logger)
                         sh.mpp_cams = None
-                        pd_outqueue.put("exit")
+                        pd_outqueue.put(("exit", None))
                         mpp_comm.join()
                         break
                     elif tgram_cmd == "stop":
@@ -142,22 +140,21 @@ def g3_main(cfg, mp_loggerqueue):
                         sh.mpp_cams = None
                         destroy_all_cam_windows(mpp_cams)
                         capture_active = False
+                        pd_outqueue.put(("capture_active", capture_active))
                 else:
                     if tgram_cmd == "exit":
-                        pd_outqueue.put("exit")
+                        pd_outqueue.put(("exit", None))
                         mpp_comm.join()
                         break
                     elif tgram_cmd == "start":
-                        cv2.destroyWindow("Messi")
                         mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
                         sh.mpp_cams = mpp_cams
                         capture_active = True
+                        pd_outqueue.put(("capture_active", capture_active))
             except (queue.Empty, EOFError):
                 continue
             except Exception:
                 continue
-
-        time.sleep(0.05)
 
     cv2.destroyAllWindows()
     clear_all_queues([pd_inqueue, pd_outqueue], logger)

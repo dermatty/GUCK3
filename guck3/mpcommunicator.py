@@ -12,6 +12,7 @@ import psutil
 import subprocess
 
 TERMINATED = False
+PD_ACTIVE = False
 
 
 class SigHandler_mpcomm:
@@ -104,12 +105,16 @@ class TelegramComm:
 
 
 def get_status():
+    global PD_ACTIVE
+
     osversion = os.popen("cat /etc/os-release").read().split("\n")[2].split("=")[1].replace('"', '')
 
     # os & version
     ret = "------- General -------"
     ret += "\nOS: " + osversion
     ret += "\nVersion: " + os.environ["GUCK3_VERSION"]
+    ret += "\nAlarm System Active: "
+    ret += "YES" if PD_ACTIVE else "NO"
     '''ret += "\nRecording: "
     ret += "YES" if recording else "NO"
     ret += "\nPaused: "
@@ -221,6 +226,8 @@ def get_status():
 
 
 def run_mpcommunicator(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
+    global PD_ACTIVE
+
     setproctitle("g3." + os.path.basename(__file__))
 
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
@@ -236,16 +243,18 @@ def run_mpcommunicator(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
 
     # ------ main looooooooop -------
     while not TERMINATED:
+        time.sleep(0.1)
         try:
-            pd_cmd = pd_inqueue.get_nowait()
+            pd_cmd, pd_params = pd_inqueue.get_nowait()
             if pd_cmd == "exit":
                 logger.debug(whoami() + "got exit cmd from pd")
                 break
+            if pd_cmd == "capture_active":
+                PD_ACTIVE = pd_params
         except (queue.Empty, EOFError):
             continue
         except Exception:
             continue
-        time.sleep(0.1)
 
     tg.stop()
 
