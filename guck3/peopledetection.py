@@ -97,6 +97,11 @@ def g3_main(cfg, mp_loggerqueue):
     mpp_comm = mp.Process(target=mpcommunicator.run_mpcommunicator, args=(pd_inqueue, pd_outqueue,
                                                                           cfg, mp_loggerqueue, ))
     mpp_comm.start()
+    tgram_active = pd_inqueue.get()
+    if tgram_active:
+        logger.info(whoami() + "telegram is active")
+    else:
+        logger.info(whoami() + "telegram is NOT active")
 
     camera_config = get_camera_config(cfg)
     capture_active = False
@@ -121,60 +126,39 @@ def g3_main(cfg, mp_loggerqueue):
 
         cv2.waitKey(1) & 0xFF
 
-        try:
-            tgram_cmd = pd_inqueue.get_nowait()
-            if capture_active:
-                if tgram_cmd == "exit":
-                    stop_cams(mpp_cams, logger)
-                    sh.mpp_cams = None
-                    pd_outqueue.put("exit")
-                    mpp_comm.join()
-                    break
-                elif tgram_cmd == "stop":
-                    stop_cams(mpp_cams, logger)
-                    sh.mpp_cams = None
-                    destroy_all_cam_windows(mpp_cams)
-                    capture_active = False
-            else:
-                if tgram_cmd == "exit":
-                    pd_outqueue.put("exit")
-                    mpp_comm.join()
-                    break
-                elif tgram_cmd == "start":
-                    cv2.destroyWindow("Messi")
-                    mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
-                    sh.mpp_cams = mpp_cams
-                    capture_active = True
-        except (queue.Empty, EOFError):
-            continue
-        except Exception:
-            continue
-
-        
-
-        '''if capture_active:
-            if ch == 27 or ch == ord("q"):
-                stop_cams(mpp_cams, logger)
-                sh.mpp_cams = None
-                break
-            elif ch == ord("e"):
-                stop_cams(mpp_cams, logger)
-                sh.mpp_cams = None
-                destroy_all_cam_windows(mpp_cams)
-                capture_active = False
-        else:
-            if ch == ord("q"):
-                break
-            elif ch == ord("s"):
-                cv2.destroyWindow("Messi")
-                mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
-                sh.mpp_cams = mpp_cams
-                capture_active = True'''
+        # telegram handler
+        if tgram_active:
+            try:
+                tgram_cmd = pd_inqueue.get_nowait()
+                if capture_active:
+                    if tgram_cmd == "exit":
+                        stop_cams(mpp_cams, logger)
+                        sh.mpp_cams = None
+                        pd_outqueue.put("exit")
+                        mpp_comm.join()
+                        break
+                    elif tgram_cmd == "stop":
+                        stop_cams(mpp_cams, logger)
+                        sh.mpp_cams = None
+                        destroy_all_cam_windows(mpp_cams)
+                        capture_active = False
+                else:
+                    if tgram_cmd == "exit":
+                        pd_outqueue.put("exit")
+                        mpp_comm.join()
+                        break
+                    elif tgram_cmd == "start":
+                        cv2.destroyWindow("Messi")
+                        mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
+                        sh.mpp_cams = mpp_cams
+                        capture_active = True
+            except (queue.Empty, EOFError):
+                continue
+            except Exception:
+                continue
 
         time.sleep(0.05)
 
     cv2.destroyAllWindows()
     clear_all_queues([pd_inqueue, pd_outqueue], logger)
-    #os.kill(mpp_comm.pid, signal.SIGTERM)
-    #mpp_comm.join()
     logger.info(whoami() + "... exited!")

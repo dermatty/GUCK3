@@ -12,9 +12,6 @@ import sys
 import multiprocessing as mp
 
 
-__version__ = "0.1"
-
-
 class SigHandler_g3:
     def __init__(self, mp_loggerqueue, mp_loglistener, mp_pd, old_sys_stdout, logger):
         self.logger = logger
@@ -282,7 +279,7 @@ class GControl:
 
 
 def run():
-    print(str(datetime.datetime.now()) + ": START UP - starting guck3 " + __version__)
+    print(str(datetime.datetime.now()) + ": START UP - starting guck3 " + os.environ["GUCK3_VERSION"])
 
     setproctitle("g3." + os.path.basename(__file__))
 
@@ -337,7 +334,7 @@ def run():
     mp_loggerqueue, mp_loglistener = mplogging.start_logging_listener(dirs["logs"] + "g3.log", maxlevel=loglevel)
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.debug(whoami() + "starting with loglevel '" + loglevel_str + "'")
-    logger.info(whoami() + "Welcome to GUCK3 " + __version__)
+    logger.info(whoami() + "Welcome to GUCK3 " + os.environ["GUCK3_VERSION"])
 
     # start peopledetection & sighandler
     mpp_peopledetection = mp.Process(target=peopledetection.g3_main, args=(cfg, mp_loggerqueue, ))
