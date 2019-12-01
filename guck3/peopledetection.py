@@ -1,4 +1,5 @@
 import os
+import queue
 from setproctitle import setproctitle
 from guck3.mplogging import whoami
 from guck3 import mplogging, get_camera_config, mpcam, mpcommunicator
@@ -68,6 +69,16 @@ def destroy_all_cam_windows(mpp_cams):
         cv2.destroyWindow(cname)
 
 
+def clear_all_queues(queuelist, logger):
+    for q in queuelist:
+        while True:
+            try:
+                q.get_nowait()
+            except (queue.Empty, EOFError):
+                break
+    logger.debug(whoami() + "all queues cleared")
+
+
 def g3_main(cfg, mp_loggerqueue):
     global TERMINATED
     setproctitle("g3." + os.path.basename(__file__))
@@ -81,15 +92,13 @@ def g3_main(cfg, mp_loggerqueue):
     signal.signal(signal.SIGTERM, sh.sighandler_pd)
 
     # spawn mpcommunicator
-    mpp_comm = mp.Process(target=mpcommunicator.run_mpcommunicator, args=(cfg, mp_loggerqueue, ))
+    pd_inqueue = mp.Queue()
+    pd_outqueue = mp.Queue()
+    mpp_comm = mp.Process(target=mpcommunicator.run_mpcommunicator, args=(pd_inqueue, pd_outqueue,
+                                                                          cfg, mp_loggerqueue, ))
     mpp_comm.start()
 
     camera_config = get_camera_config(cfg)
-
-    print("Press")
-    print("    q to quit")
-    print("    s to start video capture")
-    print("    e to end video capture")
     capture_active = False
 
     while not TERMINATED:
@@ -110,9 +119,40 @@ def g3_main(cfg, mp_loggerqueue):
             image = cv2.imread(os.getcwd() + "/guck3/data/messi.jpg")
             cv2.imshow("Messi", image)
 
-        ch = cv2.waitKey(1) & 0xFF
+        cv2.waitKey(1) & 0xFF
 
-        if capture_active:
+        try:
+            tgram_cmd = pd_inqueue.get_nowait()
+            if capture_active:
+                if tgram_cmd == "exit":
+                    stop_cams(mpp_cams, logger)
+                    sh.mpp_cams = None
+                    pd_outqueue.put("exit")
+                    mpp_comm.join()
+                    break
+                elif tgram_cmd == "stop":
+                    stop_cams(mpp_cams, logger)
+                    sh.mpp_cams = None
+                    destroy_all_cam_windows(mpp_cams)
+                    capture_active = False
+            else:
+                if tgram_cmd == "exit":
+                    pd_outqueue.put("exit")
+                    mpp_comm.join()
+                    break
+                elif tgram_cmd == "start":
+                    cv2.destroyWindow("Messi")
+                    mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
+                    sh.mpp_cams = mpp_cams
+                    capture_active = True
+        except (queue.Empty, EOFError):
+            continue
+        except Exception:
+            continue
+
+        
+
+        '''if capture_active:
             if ch == 27 or ch == ord("q"):
                 stop_cams(mpp_cams, logger)
                 sh.mpp_cams = None
@@ -129,11 +169,12 @@ def g3_main(cfg, mp_loggerqueue):
                 cv2.destroyWindow("Messi")
                 mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
                 sh.mpp_cams = mpp_cams
-                capture_active = True
+                capture_active = True'''
 
         time.sleep(0.05)
 
     cv2.destroyAllWindows()
-    os.kill(mpp_comm.pid, signal.SIGTERM)
-    mpp_comm.join()
+    clear_all_queues([pd_inqueue, pd_outqueue], logger)
+    #os.kill(mpp_comm.pid, signal.SIGTERM)
+    #mpp_comm.join()
     logger.info(whoami() + "... exited!")
