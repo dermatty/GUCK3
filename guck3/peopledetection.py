@@ -2,7 +2,7 @@ import os
 import queue
 from setproctitle import setproctitle
 from guck3.mplogging import whoami
-from guck3 import mplogging, get_camera_config, mpcam, mpcommunicator
+from guck3 import mplogging, mpcam
 import time
 import cv2
 import multiprocessing as mp
@@ -12,9 +12,8 @@ TERMINATED = False
 
 
 class SigHandler_pd:
-    def __init__(self, mpp_cams, logger):
+    def __init__(self, logger):
         self.logger = logger
-        self.mpp_cams = mpp_cams
 
     def sighandler_pd(self, a, b):
         self.shutdown()
@@ -22,8 +21,49 @@ class SigHandler_pd:
     def shutdown(self):
         global TERMINATED
         TERMINATED = True
-        stop_cams(self.mpp_cams, self.logger)
         self.logger.debug(whoami() + "got signal, exiting ...")
+
+
+# read camera data from config
+def get_camera_config(cfg):
+    snr = 0
+    idx = 0
+    camera_conf = []
+    while idx < 99:
+        idx += 1
+        try:
+            snr += 1
+            snrstr = "CAMERA" + str(snr)
+            active = True if cfg[snrstr]["ACTIVE"].lower() == "yes" else False
+            camera_name = cfg[snrstr]["NAME"]
+            stream_url = cfg[snrstr]["STREAM_URL"]
+            photo_url = cfg[snrstr]["PHOTO_URL"]
+            reboot_url = cfg[snrstr]["REBOOT_URL"]
+            ptz_mode = cfg[snrstr]["PTZ_MODE"].lower()
+            if ptz_mode not in ["start", "startstop", "none"]:
+                ptz_mode = "none"
+            ptz_right_url = cfg[snrstr]["PTZ_RIGHT_URL"]
+            ptz_left_url = cfg[snrstr]["PTZ_LEFT_URL"]
+            ptz_up_url = cfg[snrstr]["PTZ_UP_URL"]
+            ptz_down_url = cfg[snrstr]["PTZ_DOWN_URL"]
+        except Exception:
+            continue
+        cdata = {
+            "name": camera_name,
+            "active": active,
+            "stream_url": stream_url,
+            "photo_url": photo_url,
+            "reboot_url": reboot_url,
+            "ptz_mode": ptz_mode,
+            "ptz_right_url": ptz_right_url,
+            "ptz_left_url": ptz_left_url,
+            "ptz_up_url": ptz_up_url,
+            "ptz_down_url": ptz_down_url
+        }
+        camera_conf.append(cdata)
+    if not camera_conf:
+        return None
+    return camera_conf
 
 
 def startup_cams(camera_config, mp_loggerqueue, logger):
@@ -79,83 +119,56 @@ def clear_all_queues(queuelist, logger):
     logger.debug(whoami() + "all queues cleared")
 
 
-def g3_main(cfg, mp_loggerqueue):
+def run_cameras(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
     global TERMINATED
     setproctitle("g3." + os.path.basename(__file__))
 
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
 
-    mpp_cams = None
-    sh = SigHandler_pd(mpp_cams, logger)
+    camera_config = get_camera_config(cfg)
+    mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
+
+    sh = SigHandler_pd(logger)
     signal.signal(signal.SIGINT, sh.sighandler_pd)
     signal.signal(signal.SIGTERM, sh.sighandler_pd)
 
-    # spawn mpcommunicator
-    pd_inqueue = mp.Queue()
-    pd_outqueue = mp.Queue()
-    mpp_comm = mp.Process(target=mpcommunicator.run_mpcommunicator, args=(pd_inqueue, pd_outqueue,
-                                                                          cfg, mp_loggerqueue, ))
-    mpp_comm.start()
-    tgram_active = pd_inqueue.get()
-    if tgram_active:
-        logger.info(whoami() + "telegram is active")
-    else:
-        logger.info(whoami() + "telegram is NOT active")
-
-    camera_config = get_camera_config(cfg)
-    capture_active = False
+    tgram_active = False
+    pd_in_cmd, pd_in_param = pd_inqueue.get()
+    if pd_in_cmd == "tgram_active":
+        tgram_active = pd_in_param
 
     while not TERMINATED:
 
-        if not capture_active:
-            time.sleep(0.05)
-        else:
-            for c in mpp_cams:
-                if not c[1]:
-                    continue
-                c[2].send("query")
-                ret, frame = c[2].recv()
-                if ret:
-                    cv2.imshow(c[0], frame)
-                else:
-                    stop_cam(c, mpp_cams)
-                    cv2.destroyWindow(c[0])
-                    # restart / Meldung
-            cv2.waitKey(1) & 0xFF
+        time.sleep(0.05)
+
+        # get frames from cameras
+        for c in mpp_cams:
+            if not c[1]:
+                continue
+            c[2].send("query")
+            ret, frame = c[2].recv()
+            if ret:
+                cv2.imshow(c[0], frame)
+            else:
+                stop_cam(c, mpp_cams)
+                cv2.destroyWindow(c[0])
+                # restart / Meldung
+
+        cv2.waitKey(1) & 0xFF
 
         # telegram handler
         if tgram_active:
             try:
                 tgram_cmd = pd_inqueue.get_nowait()
-                if capture_active:
-                    if tgram_cmd == "exit":
-                        stop_cams(mpp_cams, logger)
-                        sh.mpp_cams = None
-                        pd_outqueue.put(("exit", None))
-                        mpp_comm.join()
-                        break
-                    elif tgram_cmd == "stop":
-                        stop_cams(mpp_cams, logger)
-                        sh.mpp_cams = None
-                        destroy_all_cam_windows(mpp_cams)
-                        capture_active = False
-                        pd_outqueue.put(("capture_active", capture_active))
-                else:
-                    if tgram_cmd == "exit":
-                        pd_outqueue.put(("exit", None))
-                        mpp_comm.join()
-                        break
-                    elif tgram_cmd == "start":
-                        mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
-                        sh.mpp_cams = mpp_cams
-                        capture_active = True
-                        pd_outqueue.put(("capture_active", capture_active))
+                if tgram_cmd == "stop":
+                    break
             except (queue.Empty, EOFError):
                 continue
             except Exception:
                 continue
 
+    stop_cams(mpp_cams, logger)
     cv2.destroyAllWindows()
     clear_all_queues([pd_inqueue, pd_outqueue], logger)
     logger.info(whoami() + "... exited!")

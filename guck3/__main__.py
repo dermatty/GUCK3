@@ -1,6 +1,8 @@
 import os
+import sensors
+import psutil
 import configparser
-import ephem
+import json
 from setproctitle import setproctitle
 import logging
 import logging.handlers
@@ -10,18 +12,24 @@ import datetime
 import signal
 import sys
 import multiprocessing as mp
+import time
+import queue
+from telegram.ext import Updater, MessageHandler, Filters
+import subprocess
+
+TERMINATED = False
 
 
 class SigHandler_g3:
-    def __init__(self, mp_loggerqueue, mp_loglistener, mp_pd, old_sys_stdout, logger):
+    def __init__(self, mp_loggerqueue, mp_loglistener, state_data, old_sys_stdout, logger):
         self.logger = logger
-        self.mp_pd = mp_pd
+        self.state_data = state_data
         self.mp_loggerqueue = mp_loggerqueue
         self.mp_loglistener = mp_loglistener
         self.old_sys_stdout = old_sys_stdout
 
     def sighandler_g3(self, a, b):
-        self.shutdown(1)
+        self.shutdown(exit_status=1)
 
     def get_trstr(self, exit_status):
         if exit_status == 3:
@@ -32,10 +40,12 @@ class SigHandler_g3:
 
     def shutdown(self, exit_status=3):
         trstr = self.get_trstr(exit_status)
-        if self.mp_pd:
-            if self.mp_pd.pid:
+        self.state_data.TG.stop()
+        mp_pd = self.state_data.mpp_peopledetection
+        if mp_pd:
+            if mp_pd.pid:
                 print(trstr + "joining peopledetection ...")
-                self.mp_pd.join()
+                mp_pd.join()
                 print(self.get_trstr(exit_status) + "peopledetection exited!")
         trstr = self.get_trstr(exit_status)
         if self.mp_loglistener:
@@ -52,233 +62,238 @@ class SigHandler_g3:
         sys.exit()
 
 
-class GControl:
+class Data:
+    def __init__(self):
+        self.PD_ACTIVE = False
+        self.mpp_peopledetection = None
+        self.TG = None
+        self.PD_INQUEUE = None
+        self.PD_OUTQUEUE = None
 
-    def __init__(self, _db, logger):
-        # configfile path
-        self.DB = _db
-        self.HCLIMIT = 1
 
-        # nightmode
-        # Pressbaum Koordinaten
-        self.NIGHTMODE = False
-        self.OEPHEM = ephem.Observer()
-        self.OEPHEM.lat = self.DB.db_query("ephem", "lat")
-        self.OEPHEM.long = self.DB.db_query("ephem", "long")
-        self.SUN = ephem.Sun()
-        # just for logging
-        logger.info("Latitude: " + self.DB.db_query("ephem", "lat"))
-        logger.info("Long: " + self.DB.db_query("ephem", "long"))
-        sunset0 = ephem.localtime(self.OEPHEM.next_setting(self.SUN))
-        logger.info("Sunset: " + str(sunset0.hour + sunset0.minute/60))
-        sunrise0 = ephem.localtime(self.OEPHEM.next_rising(self.SUN))
-        logger.info("Sunrise: " + str(sunrise0.hour + sunrise0.minute/60))
+class TelegramComm:
+    def __init__(self, state_data, cfg, mp_loggerqueue, logger):
+        self.state_data = state_data
+        self.mp_loggerqueue = mp_loggerqueue
+        self.pd_inqueue = self.state_data.PD_INQUEUE
+        self.pd_outqueue = self.state_data.PD_OUTQUEUE
+        self.cfg = cfg
+        self.logger = logger
+        self.active, self.token, self.chatids = self.get_config(self.cfg, self.logger)
+        self.running = False
 
-        # telegram
-        self.DO_TELEGRAM = self.DB.db_query("telegram", "do_telegram")
-        self.TELEGRAM_MODE = self.DB.db_query("telegram", "mode")
-        self.TELEGRAM_TOKEN = self.DB.db_query("telegram", "token")
-        self.TELEGRAM_CHATID = [int(x) for x in self.DB.db_query("telegram", "chatidlist")]
-        self.MAXT_TELEGRAM = self.DB.db_query("telegram", "maxt")
-        self.NO_CHATIDS = len(self.TELEGRAM_CHATID)
-        self.LASTTELEGRAM = None
-
-        # basic + heartbeat
-        self.DO_LOGFPS = self.DB.db_query("basic", "do_logfps")
-        self.DO_CRIT = self.DB.db_query("basic", "warn_on_status")
-        self.DO_HEARTBEAT = self.DB.db_query("basic", "do_heartbeat")
-        self.SHOW_FRAMES = self.DB.db_query("basic", "show_frames")
-        self.MAXT_HEARTBEAT = self.DB.db_query("basic", "maxt_heartbeat")
-        self.LASTHEARTBEAT = None
-        self.HEARTBEAT_DEST = self.DB.db_query("basic", "heartbeat_dest")
-        self.LASTCRIT = None
-        self.LASTPROC = None
-
-        # ftp
-        '''self.DO_FTP = self.DB.db_query("ftp", "enable")
-        self.FTP_SERVER_URL = self.DB.db_query("ftp", "server_url")
-        self.FTP_USER = self.DB.db_query("ftp", "user")
-        self.FTP_PASSWORD = self.DB.db_query("ftp", "password")
-        self.FTP_DIR = self.DB.db_query("ftp", "dir")
-        self.FTP_SET_PASSIVE = self.DB.db_query("ftp", "set_passive")
-        self.FTP_MAXT = self.DB.db_query("ftp", "maxt")
-
-        # mail
-        self.DO_MAIL = self.DB.db_query("mail", "enable")
-        self.MAIL_FROM = self.DB.db_query("mail", "from")
-        self.MAIL_TO = self.DB.db_query("mail", "to")
-        self.MAIL_USER = self.DB.db_query("mail", "user")
-        self.MAIL_PASSWORD = self.DB.db_query("mail", "password")
-        self.SMTPSERVER = self.DB.db_query("mail", "server")
-        self.SMTPPORT = self.DB.db_query("mail", "smtport")
-        self.MAXT_MAIL = self.DB.db_query("mail", "maxt")
-        self.MAIL_ONLYTEXT = self.DB.db_query("mail", "only_text")
-        self.LASTMAIL = None
-        self.MAIL = None
-        if self.DO_MAIL:
-            logger.info("Starting STMTP server ...")
-            self.MAIL = guckmsg.SMTPServer(self.MAIL_FROM, self.MAIL_TO, self.SMTPSERVER, self.SMTPPORT, self.MAIL_USER,
-                                           self.MAIL_PASSWORD)
-            if not self.MAIL.MAILOK:
-                logger.warning("Mail credentials wrong or smtp server down or some other bs with mail ...")
-                self.MAIL = None
-                self.DO_MAIL = False
-        else:
-            self.MAIL = None
-
-        # sms
-        self.DO_SMS = self.DB.db_query("sms", "enable")
-        self.SMS_USER = self.DB.db_query("sms", "user")
-        self.SMS_HASHCODE = self.DB.db_query("sms", "hashcode")
-        self.SMS_SENDER = self.DB.db_query("sms", "sender")
-        self.SMS_DESTNUMBER = self.DB.db_query("sms", "destnumber")
-        self.SMS_MAXTSMS = self.DB.db_query("sms", "maxt")
-        self.LASTSMS = None
-
-        # photo
-        self.DO_PHOTO = self.DB.db_query("photo", "enable")
-        self.DO_AI_PHOTO = self.DB.db_query("photo", "enable_aiphoto")
-        self.APHOTO_DIR = os.environ["GUCK_HOME"] + self.DB.db_query("photo", "aphoto_dir")
-        self.AIPHOTO_DIR = os.environ["GUCK_HOME"] + self.DB.db_query("photo", "aiphoto_dir")
-        self.AIPHOTO_DIR_NEG = os.environ["GUCK_HOME"] + self.DB.db_query("photo", "aiphoto_dir_neg")
-        self.MAXT_DETECTPHOTO = self.DB.db_query("photo", "maxt")
-        self.LASTPHOTO = None
-        self.PHOTO_CUTOFF = self.DB.db_query("photo", "cutoff")
-        self.PHOTO_CUTOFF_LEN = self.DB.db_query("photo", "cutoff_len")
-
-        # AI
-        self.AI_MODE = "cnn"
-        self.CNN_PATH = os.environ["GUCK_HOME"] + self.DB.db_query("ai", "cnn_path")
-        self.CNN_PATH2 = os.environ["GUCK_HOME"] + self.DB.db_query("ai", "cnn_path2")
-        self.CNN_PATH3 = os.environ["GUCK_HOME"] + self.DB.db_query("ai", "cnn_path3")
-        self.CNNMODEL = None
-        self.CNNMODEL2 = None
-        self.CNNMODEL3 = None
-        self.AI_SENS = self.DB.db_query("ai", "ai_sens")
-        thaarpath = self.HAAR_PATH = os.environ["GUCK_HOME"] + self.DB.db_query("ai", "haar_path")
-        thaarpath2 = self.HAAR_PATH2 = os.environ["GUCK_HOME"] + self.DB.db_query("ai", "haar_path2")
-        self.LASTAIPHOTO = None
-        self.AIC = None
-        self.AIDATA = []
-        self.AI = None
-        self.CPUHOG = cv2.HOGDescriptor()
-        self.CPUHOG.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    def start(self):
+        if not self.active:
+            return -1
+        self.logger.debug(whoami() + "starting telegram handler")
+        self.logger.debug(whoami() + str(self.token) + " / " + str(self.chatids))
         try:
-            self.CNNMODEL = keras.models.load_model(self.CNN_PATH)
-            self.CNNMODEL2 = keras.models.load_model(self.CNN_PATH2)
-            self.CNNMODEL3 = keras.models.load_model(self.CNN_PATH3)
-            logger.info("Created Keras CNN model for people detection")
+            self.updater = Updater(self.token, use_context=True)
+            self.dp = self.updater.dispatcher
+            self.bot = self.updater.bot
+            self.dp.add_handler(MessageHandler(Filters.text, self.handler))
+            self.updater.start_polling()
+            self.running = True
+            self.send_message_all("GUCK3 telegram bot started!")
+            self.logger.info(whoami() + "telegram handler/bot started!")
+            return 1
         except Exception as e:
-            logger.warning(str(e) + ": cannot load CNN model, applying fallback to CV2 GPU, exiting ...")
-            sys.exit()
-        self.RETINA_PATH = os.environ["GUCK_HOME"] + "data/cnn/resnet50_coco_best_v2.1.0.h5"
-        try:
-            self.RETINAMODEL = models.load_model(self.RETINA_PATH, backbone_name='resnet50')
-            # self.RETINAMODEL = keras.models.load_model(self.RETINA_PATH, custom_objects=custom_objects)
-            logger.info("Created Keras Retina model for people detection")
-        except Exception as e:
-            logger.warning(str(e) + ": cannot load retina model, setting it to None!")
-            self.RETINAMODEL = None
-            sys.exit()
+            self.logger.warning(whoami() + str(e) + "cannot start telegram bot, setting to inactive!")
+            self.token = None
+            self.chatids = None
+            self.active = False
+            return -1
 
-        # cameras
-        self.PTZ = {}
-        self.REBOOT = {}
-        self.MOGSENS = {}
-        self.DETECTIONDICT = {}
-        self.CAMERADATA = []
-        self.VIDEO_INPUT = {}
-        cursor = self.DB.db_getall("cameras")
-        i = 0
-        for cn in cursor:
-            tenable = cn["enable"]
-            if tenable:
-                tchannel = "N/A"
-                tgateway = "N/A"
-                tstatus = "N/A"
-                tinputmode = "camera"   # hardcoded: change to "video" for testing
-                tvideofile = os.environ["GUCK_HOME"] + cn["videofile"]
-                trecordfile = os.environ["GUCK_HOME"] + cn["recordfile"]
-                tcamurl = cn["url"]
-                tcamname = cn["name"]
-                thostip = cn["host_ip"]
-                thostvenv = cn["host_venv"]
-                tminarearect = int(cn["min_area_rect"])
-                thaarscale = float(cn["haarscale"])
-                thogscale = float(cn["hog_scale"])
-                thogthresh = float(cn["hog_thresh"])
-                tscanrate = int(cn["scanrate"])
-                treboot = cn["reboot"]
-                tmog2sens = int(cn["mog2_sensitivity"])
-                self.MOGSENS[i] = tmog2sens
-                self.REBOOT[i] = treboot
-                tptzm = cn["ptz_mode"]
-                tptzr = cn["ptz_mode"]
-                tptzl = cn["ptz_mode"]
-                tptzu = cn["ptz_mode"]
-                tptzd = cn["ptz_mode"]
-                self.PTZ[i] = (tptzm, tptzr, tptzl, tptzu, tptzd)
-                try:
-                    self.CAMERADATA.append(CameraDataClass(tenable, tchannel, tgateway, tstatus, tinputmode,
-                                                           tvideofile, trecordfile, tcamurl, tcamname,
-                                                           thostip, thostvenv, tminarearect, thaarpath, thaarpath2,
-                                                           thaarscale, thogscale, thogthresh, tscanrate, tptzm,
-                                                           tptzr, tptzl, tptzu, tptzd, treboot, tmog2sens))
-                except:
-                    logger.error("Wrong keys/data for camera" + str(i + 1) + ", exiting ...")
-                    sys.exit()
-                i += 1
-        self.NR_CAMERAS = i - 1
+    def stop(self):
+        if not self.active or not self.running:
+            return
+        self.logger.debug(whoami() + "stopping telegram bot")
+        self.send_message_all("Stopping GUCK3 telegram bot, this may take a while ...")
+        self.updater.stop()
+        self.logger.info(whoami() + "telegram bot stopped!")
+        self.running = False
 
-        # init pyzmq server for ssh remote query ("gq")
-
-        shm_initdata = self.PTZ, self.REBOOT, self.MOGSENS
-        self.SSHSERVER = guckmsg.SSHServer(False, shm_initdata, threading.Lock())
-
-        # init WastAlarmServer
-        self.WAS = guckmsg.WastlAlarmServer(threading.Lock())
-
-        # init telegram
-        if self.DO_TELEGRAM:
-            logger.info("Initializing Telegram ...")
+    def send_message_all(self, text):
+        for c in self.chatids:
             try:
-                self.TELEGRAMBOT = telepot.Bot(self.TELEGRAM_TOKEN)
+                self.bot.send_message(chat_id=c, text=text)
             except Exception as e:
-                logger.error(e)
-                self.DO_TELEGRAM = False
-                self.TELEGRAMBOT = None
-                logger.info("Please initiate telegram chat with your alarmbot!")
+                self.logger.warning(whoami() + str(e) + ": chat_id " + str(c))
 
-        # send thread
-        logger.info("Initializing sendthread ...")
-        sd_1 = None
-        sd_2 = None
-        sd_3 = None
-        sd_4 = None
-        sd_5 = None
-        sd_6 = None     # FTP - Tuple
-        if self.DO_MAIL:
-            sd_1 = self.MAIL.SMTPSERVER
-            sd_2 = self.MAIL.MAIL_FROM
-            sd_3 = self.MAIL.MAIL_TO
-        if self.DO_TELEGRAM:
-            sd_4 = self.TELEGRAMBOT
-            sd_5 = self.TELEGRAM_CHATID
-        if self.DO_FTP:
-            sd_6 = self.FTP_SERVER_URL, self.FTP_USER, self.FTP_PASSWORD, self.FTP_DIR, self.FTP_SET_PASSIVE
+    def get_config(self, cfg, logger):
+        active = True if cfg["TELEGRAM"]["ACTIVE"].lower() == "yes" else False
+        if not active:
+            return False, None, None
+        try:
+            token = cfg["TELEGRAM"]["TOKEN"]
+            chatids = json.loads(cfg.get("TELEGRAM", "CHATIDS"))
+            logger.debug(whoami() + "got config for active telegram bot")
+        except Exception as e:
+            logger.debug(whoami() + str(e) + "telegram config error, setting telegram to inactive!")
+            return False, None, None
+        return active, token, chatids
 
-        if self.DO_TELEGRAM or self.DO_MAIL or self.DO_FTP:
-            self.SENDMSG = guckmsg.MsgSendThread(sd_1, sd_2, sd_3, sd_4, sd_5, sd_6)
-            self.SENDMSG.start()
-        if self.DO_FTP:
-            if not self.SENDMSG.FTP.FTPOK:
-                self.DO_FTP = None
-                logger.warning("Cannot login to FTP server, disabling FTP!")
+    def handler(self, update, context):
+        global TERMINATED
+        msg = update.message.text.lower()
+        if msg == "start":
+            reply = "starting GUCK3 alarm system"
+            mpp_peopledetection = mp.Process(target=peopledetection.run_cameras, args=(self.pd_inqueue, self.pd_outqueue,
+                                                                                       self.cfg, self.mp_loggerqueue, ))
+            mpp_peopledetection.start()
+            self.state_data.mpp_peopledetection = mpp_peopledetection
+            self.pd_outqueue.put(("tgram_active", True))
+            self.state_data.PD_ACTIVE = True
+        elif msg == "stop":
+            if self.state_data.mpp_peopledetection:
+                if self.state_data.mpp_peopledetection.pid:
+                    reply = "stopping GUCK3 alarm system"
+                    self.pd_outqueue.put("stop")
+                    self.state_data.mpp_peopledetection.join()
+                self.state_data.PD_ACTIVE = False
             else:
-                logger.info("Login to FTP successfull")'''
+                reply = "GUCK3 alarm system is NOT running, cannot stop!"
+        elif msg == "exit!!":
+            reply = "exiting GUCK3!"
+            if self.state_data.mpp_peopledetection:
+                if self.state_data.mpp_peopledetection.pid:
+                    self.pd_outqueue.put("stop")
+                    self.state_data.mpp_peopledetection.join()
+                    self.state_data.PD_ACTIVE = False
+            TERMINATED = True
+        elif msg == "status":
+            reply, _, _, _, _ = get_status(self.state_data)
+        else:
+            reply = "Don't know what to do with '" + msg + "'!"
+        update.message.reply_text(reply)
+
+
+def get_status(state_data):
+
+    osversion = os.popen("cat /etc/os-release").read().split("\n")[2].split("=")[1].replace('"', '')
+
+    # os & version
+    ret = "------- General -------"
+    ret += "\nOS: " + osversion
+    ret += "\nVersion: " + os.environ["GUCK3_VERSION"]
+    ret += "\nAlarm System Active: "
+    ret += "YES" if state_data.PD_ACTIVE else "NO"
+    '''ret += "\nRecording: "
+    ret += "YES" if recording else "NO"
+    ret += "\nPaused: "
+    ret += "YES" if not alarmrunning else "NO"
+    ret += "\nTelegram Mode: " + TG_MODE
+    ret += "\nAI Mode: " + AIMODE.upper()
+    ret += "\nAI Sens.: " + str(AISENS)
+    ret += "\nHCLIMIT: " + str(HCLIMIT)
+    ret += "\nNIGHTMODE: "
+    ret += "YES" if NIGHTMODE else "NO"'''
+    ret += "\n------- System -------"
+
+    # memory
+    overall_mem = round(psutil.virtual_memory()[0] / float(2 ** 20) / 1024, 2)
+    free_mem = round(psutil.virtual_memory()[1] / float(2 ** 20) / 1024, 2)
+    used_mem = round(overall_mem - free_mem, 2)
+    perc_used = round((used_mem / overall_mem) * 100, 2)
+    mem_crit = False
+    if perc_used > 85:
+        mem_crit = True
+
+    # cpu
+    cpu_perc0 = psutil.cpu_percent(interval=0.25, percpu=True)
+    cpu_avg = sum(cpu_perc0)/float(len(cpu_perc0))
+    cpu_perc = (max(cpu_perc0) * 0.6 + cpu_avg * 0.4)/2
+    cpu_crit = False
+    if cpu_perc > 0.8:
+        cpu_crit = True
+    ret += "\nRAM: " + str(perc_used) + "% ( =" + str(used_mem) + " GB) of overall " + str(overall_mem) + \
+           " GB used"
+    ret += "\nCPU: " + str(round(cpu_avg, 1)) + "% ("
+    for cpu0 in cpu_perc0:
+        ret += str(cpu0) + " "
+    ret += ")"
+
+    # sensors / cpu temp
+    sensors.init()
+    cpu_temp = []
+    for chip in sensors.iter_detected_chips():
+        for feature in chip:
+            if feature.label[0:4] == "Core":
+                temp0 = feature.get_value()
+                cpu_temp.append(temp0)
+                ret += "\nCPU " + feature.label + " temp.: " + str(round(temp0, 2)) + "°"
+    sensors.cleanup()
+    if len(cpu_temp) > 0:
+        avg_cpu_temp = sum(c for c in cpu_temp)/len(cpu_temp)
+    else:
+        avg_cpu_temp = 0
+    if avg_cpu_temp > 52.0:
+        cpu_crit = True
+    else:
+        cpu_crit = False
+
+    # gpu
+    if osversion == "Gentoo/Linux":
+        smifn = "/opt/bin/nvidia-smi"
+    else:
+        smifn = "/usr/bin/nvidia-smi"
+    gputemp = subprocess.Popen([smifn, "--query-gpu=temperature.gpu", "--format=csv"],
+                               stdout=subprocess.PIPE).stdout.readlines()[1]
+    gpuutil = subprocess.Popen([smifn, "--query-gpu=utilization.gpu", "--format=csv"],
+                               stdout=subprocess.PIPE).stdout.readlines()[1]
+    gputemp_str = gputemp.decode("utf-8").rstrip()
+    gpuutil_str = gpuutil.decode("utf-8").rstrip()
+    ret += "\nGPU: " + gputemp_str + "°C" + " / " + gpuutil_str + " util."
+    if float(gputemp_str) > 70.0:
+        gpu_crit = True
+    else:
+        gpu_crit = False
+
+    cam_crit = False
+    '''ret += "\n------- Cameras -------"
+    camstate = []
+    for key, value in FPS.items():
+        ctstatus0 = "n/a"
+        dt = 0.0
+        mog = -1
+        j = 0
+        for i in shmlist:
+            try:
+                sname, frame, ctstatus, _, tx0 = i
+                if key == sname:
+                    mog = MOGSENS[j]
+                    dt = time.time() - tx0
+                    if dt > 30:
+                        ctstatus0 = "DOWN"
+                    elif dt > 3:
+                        ctstatus0 = "DELAYED"
+                    else:
+                        ctstatus0 = "running"
+                    camstate.append(ctstatus0)
+            except:
+                pass
+            j += 1
+        ret += "\n" + key + " " + ctstatus0 + " @ %3.1f fps\r" % value + ", sens.=" + str(mog) + " (%.2f" % dt + " sec. ago)"
+    if len([c for c in camstate if c != "running"]) > 0:
+        cam_crit = True'''
+    ret += "\n------- System Summary -------"
+    ret += "\nRAM: "
+    ret += "CRITICAL!" if mem_crit else "OK!"
+    ret += "\nCPU: "
+    ret += "CRITICAL!" if cpu_crit else "OK!"
+    ret += "\nGPU: "
+    ret += "CRITICAL!" if gpu_crit else "OK!"
+    ret += "\nCAMs: "
+    if state_data.PD_ACTIVE:
+        ret += "CRITICAL!" if cam_crit else "OK!"
+    else:
+        ret += "NOT RUNNING!"
+    return ret, mem_crit, cpu_crit, gpu_crit, cam_crit
 
 
 def run():
+    global TERMINATED
+
     print(str(datetime.datetime.now()) + ": START UP - starting guck3 " + os.environ["GUCK3_VERSION"])
 
     setproctitle("g3." + os.path.basename(__file__))
@@ -330,19 +345,36 @@ def run():
 
     print(str(datetime.datetime.now()) + ": START UP - now switching to logging in log files!")
 
+    # global data object
+    state_data = Data()
+
     # init logger
     mp_loggerqueue, mp_loglistener = mplogging.start_logging_listener(dirs["logs"] + "g3.log", maxlevel=loglevel)
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.debug(whoami() + "starting with loglevel '" + loglevel_str + "'")
     logger.info(whoami() + "Welcome to GUCK3 " + os.environ["GUCK3_VERSION"])
 
-    # start peopledetection & sighandler
-    mpp_peopledetection = mp.Process(target=peopledetection.g3_main, args=(cfg, mp_loggerqueue, ))
-    sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, mpp_peopledetection, old_sys_stdout, logger)
+    # sighandler
+    sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, state_data, old_sys_stdout, logger)
     signal.signal(signal.SIGINT, sh.sighandler_g3)
     signal.signal(signal.SIGTERM, sh.sighandler_g3)
-    mpp_peopledetection.start()
-    mpp_peopledetection.join()
+
+    # init queues
+    state_data.PD_INQUEUE = mp.Queue()
+    state_data.PD_OUTQUEUE = mp.Queue()
+
+    # Telegram
+    state_data.TG = TelegramComm(state_data, cfg, mp_loggerqueue, logger)
+    state_data.TG.start()
+
+    while not TERMINATED:
+        time.sleep(0.1)
+        try:
+            pd_cmd, pd_params = state_data.PD_INQUEUE.get_nowait()
+        except (queue.Empty, EOFError):
+            continue
+        except Exception:
+            continue
 
     # shutdown
     sh.shutdown(1)
