@@ -46,6 +46,11 @@ def get_camera_config(cfg):
             ptz_left_url = cfg[snrstr]["PTZ_LEFT_URL"]
             ptz_up_url = cfg[snrstr]["PTZ_UP_URL"]
             ptz_down_url = cfg[snrstr]["PTZ_DOWN_URL"]
+            min_area_rect = int(cfg[snrstr]["MIN_AREA_RECT"])
+            hog_scale = float(cfg[snrstr]["HOG_SCALE"])
+            hog_thresh = float(cfg[snrstr]["HOG_THRESH"])
+            mog2_sensitivity = float(cfg[snrstr]["MOG2_SENSITIVITY"])
+            scanrate = float(cfg[snrstr]["SCANRATE"])
         except Exception:
             continue
         cdata = {
@@ -58,7 +63,12 @@ def get_camera_config(cfg):
             "ptz_right_url": ptz_right_url,
             "ptz_left_url": ptz_left_url,
             "ptz_up_url": ptz_up_url,
-            "ptz_down_url": ptz_down_url
+            "ptz_down_url": ptz_down_url,
+            "min_area_rect": min_area_rect,
+            "hog_scale": hog_scale,
+            "hog_thresh": hog_thresh,
+            "mog2_sensitivity": mog2_sensitivity,
+            "scanrate": scanrate
         }
         camera_conf.append(cdata)
     if not camera_conf:
@@ -68,14 +78,24 @@ def get_camera_config(cfg):
 
 def startup_cams(camera_config, mp_loggerqueue, logger):
     mpp_cams = []
-    for c in camera_config:
+    for i, c in enumerate(camera_config):
         if not c["active"]:
             continue
         parent_pipe, child_pipe = mp.Pipe()
         mpp_cam = mp.Process(target=mpcam.run_cam, args=(c, child_pipe, mp_loggerqueue, ))
-        mpp_cams.append((c["name"], mpp_cam, parent_pipe, child_pipe))
         mpp_cam.start()
-        logger.debug(whoami() + "camera " + c["name"] + " started!")
+        try:
+            parent_pipe.send("query_cam_status")
+            camstatus = parent_pipe.recv()
+        except Exception:
+            camstatus = False
+        if camstatus:
+            mpp_cams.append((c["name"], mpp_cam, parent_pipe, child_pipe))
+            logger.debug(whoami() + "camera " + c["name"] + " started!")
+        else:
+            logger.debug(whoami() + "camera " + c["name"] + " out of function, not started!")
+            mpp_cam.join()
+            camera_config[i]["active"] = False
     return mpp_cams
 
 
@@ -150,7 +170,8 @@ def run_cameras(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
             if not c[1]:
                 continue
             c[2].send("query")
-            ret, frame = c[2].recv()
+        for c in mpp_cams:
+            ret, frame, converted_list, tt0 = c[2].recv()
             if ret:
                 cv2.imshow(c[0], frame)
             else:
