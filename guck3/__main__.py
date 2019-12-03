@@ -16,8 +16,54 @@ import time
 import queue
 from telegram.ext import Updater, MessageHandler, Filters
 import subprocess
+from threading import Thread
+
 
 TERMINATED = False
+RESTART = False
+
+
+def GeneralMsgHandler(msg, bot, state_data, cfg, mp_loggerqueue):
+    global TERMINATED
+    global RESTART
+    # bot = tgram / kbd
+    bot0 = bot.lower()
+    if bot0 not in ["tgram", "kbd"]:
+        return None
+    if msg == "start":
+        reply = "starting GUCK3 alarm system"
+        mpp_peopledetection = mp.Process(target=peopledetection.run_cameras,
+                                         args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, cfg, mp_loggerqueue, ))
+        mpp_peopledetection.start()
+        state_data.mpp_peopledetection = mpp_peopledetection
+        state_data.PD_OUTQUEUE.put((bot0 + "_active", True))
+        state_data.PD_ACTIVE = True
+    elif msg == "stop":
+        if state_data.mpp_peopledetection:
+            if state_data.mpp_peopledetection.pid:
+                reply = "stopping GUCK3 alarm system"
+                state_data.PD_OUTQUEUE.put("stop")
+                state_data.mpp_peopledetection.join()
+            state_data.PD_ACTIVE = False
+        else:
+            reply = "GUCK3 alarm system is NOT running, cannot stop!"
+    elif msg == "exit!!" or msg == "restart!!":
+        if msg == "restart!!":
+            reply = "restarting GUCK3!"
+            RESTART = True
+        else:
+            reply = "exiting GUCK3!"
+        if state_data.mpp_peopledetection:
+            if state_data.mpp_peopledetection.pid:
+                state_data.PD_OUTQUEUE.put("stop")
+                state_data.mpp_peopledetection.join()
+                state_data.PD_ACTIVE = False
+        TERMINATED = True
+    elif msg == "status":
+        reply, _, _, _, _ = get_status(state_data)
+    else:
+        reply = "Don't know what to do with '" + msg + "'!"
+    return reply
 
 
 class SigHandler_g3:
@@ -38,13 +84,18 @@ class SigHandler_g3:
             trstr = str(datetime.datetime.now()) + ": SHUTDOWN - "
         return trstr
 
-    def shutdown(self, exit_status=3):
+    def shutdown(self, exit_status=1):
         trstr = self.get_trstr(exit_status)
-        self.state_data.TG.stop()
+        if self.state_data.TG.running:
+            self.state_data.TG.stop()
+        if self.state_data.KB.active:
+            self.state_data.KB.stop()
+            self.state_data.KB.join()
         mp_pd = self.state_data.mpp_peopledetection
         if mp_pd:
             if mp_pd.pid:
                 print(trstr + "joining peopledetection ...")
+                self.state_data.PD_OUTQUEUE.put("stop")
                 mp_pd.join()
                 print(self.get_trstr(exit_status) + "peopledetection exited!")
         trstr = self.get_trstr(exit_status)
@@ -59,19 +110,85 @@ class SigHandler_g3:
                 print(self.get_trstr(exit_status) + "loglistener exited!")
         if sys.stdout != self.old_sys_stdout:
             sys.stdout = self.old_sys_stdout
-        sys.exit()
 
 
-class Data:
+def input_raise_to(a, b):
+    raise TimeoutError
+
+
+def input_to(fn, timeout, queue):
+    signal.signal(signal.SIGALRM, input_raise_to)
+    signal.signal(signal.SIGINT, input_raise_to)
+    signal.signal(signal.SIGTERM, input_raise_to)
+    signal.alarm(timeout)
+    sys.stdin = os.fdopen(fn)
+    try:
+        msg = input()
+        signal.alarm(0)
+        queue.put(msg)
+    except TimeoutError:
+        signal.alarm(0)
+        queue.put(None)
+
+
+class StateData:
     def __init__(self):
         self.PD_ACTIVE = False
         self.mpp_peopledetection = None
         self.TG = None
+        self.KB = None
         self.PD_INQUEUE = None
         self.PD_OUTQUEUE = None
 
 
-class TelegramComm:
+class KeyboardThread(Thread):
+    def __init__(self, state_data, cfg, mp_loggerqueue, logger):
+        Thread.__init__(self)
+        self.daemon = True
+        self.state_data = state_data
+        self.mp_loggerqueue = mp_loggerqueue
+        self.pd_inqueue = self.state_data.PD_INQUEUE
+        self.pd_outqueue = self.state_data.PD_OUTQUEUE
+        self.cfg = cfg
+        self.logger = logger
+        self.running = False
+        self.active = self.get_config()
+        self.kbqueue = mp.Queue()
+        self.fn = sys.stdin.fileno()
+        self.is_shutdown = False
+
+    def get_config(self):
+        active = True if self.cfg["KEYBOARD"]["ACTIVE"].lower() == "yes" else False
+        return active
+
+    def sighandler_kbd(self, a,  b):
+        self.running = False
+
+    def stop(self):
+        if not self.active:
+            return
+        self.running = False
+        self.logger.debug(whoami() + "stopping keyboard thread")
+        print("Stopping GUCK3 keyboard bot, this may take a second ...")
+
+    def run(self):
+        if not self.active:
+            return
+        self.logger.debug(whoami() + "starting keyboard thread")
+        print("Enter commands: start / stop / exit!! / restart!! / status")
+        self.running = True
+        while self.running:
+            mpp_inputto = mp.Process(target=input_to, args=(self.fn, 1, self.kbqueue, ))
+            mpp_inputto.start()
+            msg = self.kbqueue.get()
+            mpp_inputto.join()
+            if self.running and msg:
+                reply = GeneralMsgHandler(msg, "kbd", self.state_data, self.cfg, self.mp_loggerqueue)
+                print(reply)
+        self.logger.debug(whoami() + "keyboard thread stopped!")
+
+
+class TelegramThread:
     def __init__(self, state_data, cfg, mp_loggerqueue, logger):
         self.state_data = state_data
         self.mp_loggerqueue = mp_loggerqueue
@@ -134,37 +251,8 @@ class TelegramComm:
         return active, token, chatids
 
     def handler(self, update, context):
-        global TERMINATED
         msg = update.message.text.lower()
-        if msg == "start":
-            reply = "starting GUCK3 alarm system"
-            mpp_peopledetection = mp.Process(target=peopledetection.run_cameras, args=(self.pd_inqueue, self.pd_outqueue,
-                                                                                       self.cfg, self.mp_loggerqueue, ))
-            mpp_peopledetection.start()
-            self.state_data.mpp_peopledetection = mpp_peopledetection
-            self.pd_outqueue.put(("tgram_active", True))
-            self.state_data.PD_ACTIVE = True
-        elif msg == "stop":
-            if self.state_data.mpp_peopledetection:
-                if self.state_data.mpp_peopledetection.pid:
-                    reply = "stopping GUCK3 alarm system"
-                    self.pd_outqueue.put("stop")
-                    self.state_data.mpp_peopledetection.join()
-                self.state_data.PD_ACTIVE = False
-            else:
-                reply = "GUCK3 alarm system is NOT running, cannot stop!"
-        elif msg == "exit!!":
-            reply = "exiting GUCK3!"
-            if self.state_data.mpp_peopledetection:
-                if self.state_data.mpp_peopledetection.pid:
-                    self.pd_outqueue.put("stop")
-                    self.state_data.mpp_peopledetection.join()
-                    self.state_data.PD_ACTIVE = False
-            TERMINATED = True
-        elif msg == "status":
-            reply, _, _, _, _ = get_status(self.state_data)
-        else:
-            reply = "Don't know what to do with '" + msg + "'!"
+        reply = GeneralMsgHandler(msg, "tgram", self.state_data, self.cfg, self.mp_loggerqueue)
         update.message.reply_text(reply)
 
 
@@ -293,7 +381,12 @@ def get_status(state_data):
 
 def run():
     global TERMINATED
+    global RESTART
 
+    TERMINATED = False
+    RESTART = False
+
+    print("*" * 80)
     print(str(datetime.datetime.now()) + ": START UP - starting guck3 " + os.environ["GUCK3_VERSION"])
 
     setproctitle("g3." + os.path.basename(__file__))
@@ -346,7 +439,7 @@ def run():
     print(str(datetime.datetime.now()) + ": START UP - now switching to logging in log files!")
 
     # global data object
-    state_data = Data()
+    state_data = StateData()
 
     # init logger
     mp_loggerqueue, mp_loglistener = mplogging.start_logging_listener(dirs["logs"] + "g3.log", maxlevel=loglevel)
@@ -356,6 +449,8 @@ def run():
 
     # sighandler
     sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, state_data, old_sys_stdout, logger)
+    old_sigint = signal.getsignal(signal.SIGINT)
+    old_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGINT, sh.sighandler_g3)
     signal.signal(signal.SIGTERM, sh.sighandler_g3)
 
@@ -364,8 +459,12 @@ def run():
     state_data.PD_OUTQUEUE = mp.Queue()
 
     # Telegram
-    state_data.TG = TelegramComm(state_data, cfg, mp_loggerqueue, logger)
+    state_data.TG = TelegramThread(state_data, cfg, mp_loggerqueue, logger)
     state_data.TG.start()
+
+    # KeyboardThread
+    state_data.KB = KeyboardThread(state_data, cfg, mp_loggerqueue, logger)
+    state_data.KB.start()
 
     while not TERMINATED:
         time.sleep(0.1)
@@ -377,7 +476,12 @@ def run():
             continue
 
     # shutdown
-    sh.shutdown(1)
+    exitcode = 1
+    if RESTART:
+        exitcode = 3
+    sh.shutdown(exitcode)
     if sys.stdout != old_sys_stdout:
         sys.stdout = old_sys_stdout
-    return 1
+    signal.signal(signal.SIGINT, old_sigint)
+    signal.signal(signal.SIGTERM, old_sigterm)
+    return exitcode

@@ -7,20 +7,12 @@ import time
 import signal
 
 
-TERMINATED = False
-
-
 class SigHandler_mpcam:
     def __init__(self, logger):
         self.logger = logger
 
     def sighandler_mpcam(self, a, b):
-        self.shutdown()
-
-    def shutdown(self):
-        global TERMINATED
-        TERMINATED = True
-        self.logger.debug(whoami() + "got signal, terminating")
+        pass
 
 
 class Matcher:
@@ -49,7 +41,6 @@ class Matcher:
 
 
 def run_cam(cfg, child_pipe, mp_loggerqueue):
-    global TERMINATED
 
     setproctitle("g3." + cfg["name"] + "_" + os.path.basename(__file__))
 
@@ -64,7 +55,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
 
     # cam_is_ok = tm.waitforcaption()
 
-    while not TERMINATED:
+    while True:
         cmd = child_pipe.recv()
         if cmd == "stop":
             child_pipe.send(("stopped!", None))

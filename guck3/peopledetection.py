@@ -134,9 +134,12 @@ def run_cameras(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
     signal.signal(signal.SIGTERM, sh.sighandler_pd)
 
     tgram_active = False
+    kbd_active = False
     pd_in_cmd, pd_in_param = pd_inqueue.get()
     if pd_in_cmd == "tgram_active":
         tgram_active = pd_in_param
+    elif pd_in_cmd == "kbd_active":
+        kbd_active = pd_in_param
 
     while not TERMINATED:
 
@@ -158,10 +161,11 @@ def run_cameras(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
         cv2.waitKey(1) & 0xFF
 
         # telegram handler
-        if tgram_active:
+        if tgram_active or kbd_active:
             try:
-                tgram_cmd = pd_inqueue.get_nowait()
-                if tgram_cmd == "stop":
+                cmd = pd_inqueue.get_nowait()
+                logger.debug(whoami() + "received " + cmd)
+                if cmd == "stop":
                     break
             except (queue.Empty, EOFError):
                 continue
