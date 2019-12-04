@@ -17,6 +17,7 @@ import queue
 from telegram.ext import Updater, MessageHandler, Filters
 import subprocess
 from threading import Thread
+from keras_retinanet import models
 
 
 TERMINATED = False
@@ -33,7 +34,8 @@ def GeneralMsgHandler(msg, bot, state_data, cfg, mp_loggerqueue):
     if msg == "start":
         reply = "starting GUCK3 alarm system"
         mpp_peopledetection = mp.Process(target=peopledetection.run_cameras,
-                                         args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, cfg, mp_loggerqueue, ))
+                                         args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, state_data.DIRS,
+                                               cfg, mp_loggerqueue, ))
         mpp_peopledetection.start()
         state_data.mpp_peopledetection = mpp_peopledetection
         state_data.PD_OUTQUEUE.put((bot0 + "_active", True))
@@ -139,6 +141,8 @@ class StateData:
         self.KB = None
         self.PD_INQUEUE = None
         self.PD_OUTQUEUE = None
+        self.MAINQUEUE = None
+        self.DIRS = None
 
 
 class KeyboardThread(Thread):
@@ -325,12 +329,16 @@ def get_status(state_data):
         smifn = "/opt/bin/nvidia-smi"
     else:
         smifn = "/usr/bin/nvidia-smi"
-    gputemp = subprocess.Popen([smifn, "--query-gpu=temperature.gpu", "--format=csv"],
+    try:
+        gputemp = subprocess.Popen([smifn, "--query-gpu=temperature.gpu", "--format=csv"],
+                                   stdout=subprocess.PIPE).stdout.readlines()[1]
+        gpuutil = subprocess.Popen([smifn, "--query-gpu=utilization.gpu", "--format=csv"],
                                stdout=subprocess.PIPE).stdout.readlines()[1]
-    gpuutil = subprocess.Popen([smifn, "--query-gpu=utilization.gpu", "--format=csv"],
-                               stdout=subprocess.PIPE).stdout.readlines()[1]
-    gputemp_str = gputemp.decode("utf-8").rstrip()
-    gpuutil_str = gpuutil.decode("utf-8").rstrip()
+        gputemp_str = gputemp.decode("utf-8").rstrip()
+        gpuutil_str = gpuutil.decode("utf-8").rstrip()
+    except Exception:
+        gputemp_str = "0.0"
+        gpuutil_str = "0.0%"
     ret += "\nGPU: " + gputemp_str + "°C" + " / " + gpuutil_str + " util."
     if float(gputemp_str) > 70.0:
         gpu_crit = True
@@ -440,6 +448,7 @@ def run():
 
     # global data object
     state_data = StateData()
+    state_data.DIRS = dirs
 
     # init logger
     mp_loggerqueue, mp_loglistener = mplogging.start_logging_listener(dirs["logs"] + "g3.log", maxlevel=loglevel)
@@ -457,6 +466,7 @@ def run():
     # init queues
     state_data.PD_INQUEUE = mp.Queue()
     state_data.PD_OUTQUEUE = mp.Queue()
+    state_data.MAINQUEUE = mp.Queue()
 
     # Telegram
     state_data.TG = TelegramThread(state_data, cfg, mp_loggerqueue, logger)

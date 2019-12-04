@@ -7,6 +7,13 @@ import time
 import cv2
 import multiprocessing as mp
 import signal
+import numpy as np
+import keras
+from keras_retinanet import models
+from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize_image
+# import tensorflow as tf
+from keras.utils import np_utils
+
 
 TERMINATED = False
 
@@ -22,6 +29,69 @@ class SigHandler_pd:
         global TERMINATED
         TERMINATED = True
         self.logger.debug(whoami() + "got signal, exiting ...")
+
+
+class KerasRetinaNet:
+    def __init__(self, dirs, cfg, logger):
+        self.logger = logger
+        self.active = False
+        self.cfg = cfg
+        self.dirs = dirs
+        self.RETINA_PATH = self.dirs["main"] + self.cfg["OPTIONS"]["RETINANET_MODEL"]
+        print(self.RETINA_PATH)
+        try:
+            # self.RETINAMODEL = models.load_model(self.RETINA_PATH, backbone_name='resnet50')
+            self.RETINAMODEL = models.load_model('/home/stephan/.guck3/resnet50_coco_best_v2.1.0.h5', backbone_name='resnet50')
+            print("-----------")
+            self.active = True
+            self.logger.info(whoami() + "RetinaNet initialized!")
+        except Exception as e:
+            self.logger.error(whoami() + str(e) + ": cannot init RetinaNet!")
+
+    def overlap_rects(r1, r2):
+        x11, y11, x12, y12 = r1
+        w = abs(x12 - x11)
+        h = abs(y12 - y11)
+        area1 = w * h
+        x21, y21, x22, y22 = r2
+        w = abs(x22 - x21)
+        h = abs(y22 - y21)
+        area2 = w * h
+        x_overlap = max(0, min(x12, x22) - max(x11, x21))
+        y_overlap = max(0, min(y12, y22) - max(y11, y21))
+        overlapArea = x_overlap * y_overlap
+        return overlapArea, overlapArea/area1, overlapArea/area2
+
+    def get_cnn_classification(self, frame, objlist):
+        if not self.active:
+            return
+        objlist_ret = []
+        for o in objlist:
+            id, rect, class_ai, class_ai_lt = o
+            found = True
+            image = preprocess_image(frame)
+            image, scale = resize_image(image)
+            pred_boxes, pred_scores, pred_labels = self.RETINAMODEL.predict_on_batch(np.expand_dims(image, axis=0))
+            pred_boxes /= scale
+            found = False
+            for box, score, label in zip(pred_boxes[0], pred_scores[0], pred_labels[0]):
+                if label != 0 or score < 0.5:
+                    continue
+                b = box.astype(int)
+                r1 = (b[0], b[1], b[2], b[3])
+                x, y, w, h = rect
+                r2 = (x, y, x + w, y + h)
+                overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
+                if (ratio1 > 0.70 or ratio2 > 0.70):
+                    self.logger.info(" Human detected with score " + str(score) + " and overlap " + str(ratio1) + " / " + str(ratio2))
+                    found = True
+                    break
+            if found:
+                class_ai_lt = time.time()
+                class_ai += 1
+                self.logger.info(whoami() + "!! CLASSIFIED !!")
+            objlist_ret.append(id, rect, class_ai, class_ai_lt)
+        return objlist_ret
 
 
 # read camera data from config
@@ -139,7 +209,7 @@ def clear_all_queues(queuelist, logger):
     logger.debug(whoami() + "all queues cleared")
 
 
-def run_cameras(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
+def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     global TERMINATED
     setproctitle("g3." + os.path.basename(__file__))
 
@@ -161,19 +231,26 @@ def run_cameras(pd_outqueue, pd_inqueue, cfg, mp_loggerqueue):
     elif pd_in_cmd == "kbd_active":
         kbd_active = pd_in_param
 
+    # kreta = KerasRetinaNet(dirs, cfg, logger)
+
     while not TERMINATED:
 
         time.sleep(0.05)
 
         # get frames from cameras
-        for c in mpp_cams:
+        camlist = []
+        for i, c in enumerate(mpp_cams):
+            camlist.append((None, None, None, None, None))
             if not c[1]:
+                camlist[i] = (c[0], None, None, None, None)
                 continue
             c[2].send("query")
-        for c in mpp_cams:
-            ret, frame, converted_list, tt0 = c[2].recv()
+        for i, c in enumerate(mpp_cams):
+            if not c[1]:
+                continue
+            ret, frame0, objlist, tx = c[2].recv()
             if ret:
-                cv2.imshow(c[0], frame)
+                cv2.imshow(c[0], frame0)
             else:
                 stop_cam(c, mpp_cams)
                 cv2.destroyWindow(c[0])
