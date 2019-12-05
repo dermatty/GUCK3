@@ -1,6 +1,7 @@
 from os.path import expanduser
 import os
 import shutil
+import queue
 
 
 # setup folders
@@ -45,3 +46,13 @@ def setup_dirs():
                 return -1, str(e) + ": cannot initialize guck3.config file!"
 
     return 1, dirs
+
+
+# clear all queues
+def clear_all_queues(queuelist):
+    for q in queuelist:
+        while True:
+            try:
+                q.get_nowait()
+            except (queue.Empty, EOFError):
+                break

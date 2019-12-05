@@ -2,17 +2,18 @@ import os
 import queue
 from setproctitle import setproctitle
 from guck3.mplogging import whoami
-from guck3 import mplogging, mpcam
+from guck3 import mplogging, mpcam, clear_all_queues
 import time
 import cv2
 import multiprocessing as mp
 import signal
 import numpy as np
-import keras
 from keras_retinanet import models
 from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize_image
-# import tensorflow as tf
-from keras.utils import np_utils
+from keras import backend as K
+import sys
+import logging
+import tensorflow as tf
 
 
 TERMINATED = False
@@ -38,15 +39,17 @@ class KerasRetinaNet:
         self.cfg = cfg
         self.dirs = dirs
         self.RETINA_PATH = self.dirs["main"] + self.cfg["OPTIONS"]["RETINANET_MODEL"]
-        print(self.RETINA_PATH)
+        old_sys_stdout = sys.stdout
+        f = open('/dev/null', 'w')
+        sys.stdout = f
         try:
-            # self.RETINAMODEL = models.load_model(self.RETINA_PATH, backbone_name='resnet50')
-            self.RETINAMODEL = models.load_model('/home/stephan/.guck3/resnet50_coco_best_v2.1.0.h5', backbone_name='resnet50')
-            print("-----------")
+            self.RETINAMODEL = models.load_model(self.RETINA_PATH, backbone_name='resnet50')
+            # self.RETINAMODEL = models.load_model('/home/stephan/.guck3/resnet50_coco_best_v2.1.0.h5', backbone_name='resnet50')
             self.active = True
             self.logger.info(whoami() + "RetinaNet initialized!")
         except Exception as e:
             self.logger.error(whoami() + str(e) + ": cannot init RetinaNet!")
+        sys.stdout = old_sys_stdout
 
     def overlap_rects(r1, r2):
         x11, y11, x12, y12 = r1
@@ -199,19 +202,15 @@ def destroy_all_cam_windows(mpp_cams):
         cv2.destroyWindow(cname)
 
 
-def clear_all_queues(queuelist, logger):
-    for q in queuelist:
-        while True:
-            try:
-                q.get_nowait()
-            except (queue.Empty, EOFError):
-                break
-    logger.debug(whoami() + "all queues cleared")
-
-
 def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     global TERMINATED
+
+    K.clear_session()
+
     setproctitle("g3." + os.path.basename(__file__))
+
+    # tf.get_logger().setLevel('INFO')
+    # tf.autograph.set_verbosity(1)
 
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
@@ -231,7 +230,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     elif pd_in_cmd == "kbd_active":
         kbd_active = pd_in_param
 
-    # kreta = KerasRetinaNet(dirs, cfg, logger)
+    kreta = KerasRetinaNet(dirs, cfg, logger)
 
     while not TERMINATED:
 
@@ -261,7 +260,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
         # telegram handler
         if tgram_active or kbd_active:
             try:
-                cmd = pd_inqueue.get_nowait()
+                cmd, param = pd_inqueue.get_nowait()
                 logger.debug(whoami() + "received " + cmd)
                 if cmd == "stop":
                     break
@@ -272,5 +271,5 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
 
     stop_cams(mpp_cams, logger)
     cv2.destroyAllWindows()
-    clear_all_queues([pd_inqueue, pd_outqueue], logger)
+    clear_all_queues([pd_inqueue, pd_outqueue])
     logger.info(whoami() + "... exited!")

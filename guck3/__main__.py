@@ -6,7 +6,7 @@ import json
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -31,36 +31,25 @@ def GeneralMsgHandler(msg, bot, state_data, cfg, mp_loggerqueue):
     bot0 = bot.lower()
     if bot0 not in ["tgram", "kbd"]:
         return None
+
     if msg == "start":
+        state_data.MAINQUEUE.put(("start", bot0))
         reply = "starting GUCK3 alarm system"
-        mpp_peopledetection = mp.Process(target=peopledetection.run_cameras,
-                                         args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, state_data.DIRS,
-                                               cfg, mp_loggerqueue, ))
-        mpp_peopledetection.start()
-        state_data.mpp_peopledetection = mpp_peopledetection
-        state_data.PD_OUTQUEUE.put((bot0 + "_active", True))
-        state_data.PD_ACTIVE = True
     elif msg == "stop":
         if state_data.mpp_peopledetection:
             if state_data.mpp_peopledetection.pid:
+                state_data.MAINQUEUE.put(("stop", None))
                 reply = "stopping GUCK3 alarm system"
-                state_data.PD_OUTQUEUE.put("stop")
-                state_data.mpp_peopledetection.join()
-            state_data.PD_ACTIVE = False
         else:
             reply = "GUCK3 alarm system is NOT running, cannot stop!"
     elif msg == "exit!!" or msg == "restart!!":
         if msg == "restart!!":
             reply = "restarting GUCK3!"
-            RESTART = True
         else:
             reply = "exiting GUCK3!"
         if state_data.mpp_peopledetection:
             if state_data.mpp_peopledetection.pid:
-                state_data.PD_OUTQUEUE.put("stop")
-                state_data.mpp_peopledetection.join()
-                state_data.PD_ACTIVE = False
-        TERMINATED = True
+                state_data.MAINQUEUE.put((msg, None))
     elif msg == "status":
         reply, _, _, _, _ = get_status(state_data)
     else:
@@ -466,7 +455,7 @@ def run():
     # init queues
     state_data.PD_INQUEUE = mp.Queue()
     state_data.PD_OUTQUEUE = mp.Queue()
-    state_data.MAINQUEUE = mp.Queue()
+    state_data.MAINQUEUE = queue.Queue()
 
     # Telegram
     state_data.TG = TelegramThread(state_data, cfg, mp_loggerqueue, logger)
@@ -478,12 +467,47 @@ def run():
 
     while not TERMINATED:
         time.sleep(0.1)
+
+        # get el from peopledetection queue
         try:
             pd_cmd, pd_params = state_data.PD_INQUEUE.get_nowait()
         except (queue.Empty, EOFError):
-            continue
+            pass
         except Exception:
-            continue
+            pass
+
+        # get el from main queue (GeneralMsgHandler)
+        # because we cannot start pdedector from thread! (keras/tf bug)
+        try:
+            mq_cmd, mq_param = state_data.MAINQUEUE.get_nowait()
+            if mq_cmd == "start":
+                mpp_peopledetection = mp.Process(target=peopledetection.run_cameras,
+                                                 args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, state_data.DIRS,
+                                                       cfg, mp_loggerqueue, ))
+                mpp_peopledetection.start()
+                state_data.mpp_peopledetection = mpp_peopledetection
+                state_data.PD_OUTQUEUE.put((mq_param + "_active", True))
+                state_data.PD_ACTIVE = True
+            elif mq_cmd == "stop":
+                if state_data.mpp_peopledetection:
+                    if state_data.mpp_peopledetection.pid:
+                        state_data.PD_OUTQUEUE.put(("stop", None))
+                        state_data.mpp_peopledetection.join()
+                    state_data.PD_ACTIVE = False
+            elif mq_cmd == "exit!!" or mq_cmd == "restart!!":
+                if mq_cmd == "restart!!":
+                    RESTART = True
+                if state_data.mpp_peopledetection:
+                    if state_data.mpp_peopledetection.pid:
+                        state_data.PD_OUTQUEUE.put(("stop", None))
+                        state_data.mpp_peopledetection.join()
+                        state_data.PD_ACTIVE = False
+                TERMINATED = True
+        except (queue.Empty, EOFError):
+            pass
+        except Exception:
+            pass
+
 
     # shutdown
     exitcode = 1
@@ -494,4 +518,5 @@ def run():
         sys.stdout = old_sys_stdout
     signal.signal(signal.SIGINT, old_sigint)
     signal.signal(signal.SIGTERM, old_sigterm)
+    clear_all_queues([state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, state_data.MAINQUEUE])
     return exitcode
