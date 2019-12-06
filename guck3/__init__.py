@@ -10,10 +10,12 @@ def setup_dirs():
     userhome = expanduser("~")
     maindir = userhome + "/.guck3/"
     logsdir = maindir + "logs/"
+    videodir = maindir + "video/"
     dirs = {
         "install": install_dir,
         "home": userhome,
         "main": maindir,
+        "video": videodir,
         "logs": logsdir
     }
 
@@ -30,6 +32,13 @@ def setup_dirs():
             os.mkdir(logsdir)
         except Exception as e:
             return -1, str(e) + ": cannot create logs directory!", None, None, None, None, None
+
+    # check for logsdir
+    if not os.path.exists(videodir):
+        try:
+            os.mkdir(videodir)
+        except Exception as e:
+            return -1, str(e) + ": cannot create video directory!", None, None, None, None, None
 
     # check for configfile
     if not os.path.isfile(maindir + "guck3.config"):

@@ -1,6 +1,5 @@
 import cv2
 from setproctitle import setproctitle
-from guck3.mplogging import whoami
 from guck3 import mplogging
 import os
 import time
@@ -8,6 +7,15 @@ import signal
 import numpy as np
 from random import randint
 import sys
+import inspect
+
+CNAME = None
+
+
+def whoami():
+    outer_func_name = str(inspect.getouterframes(inspect.currentframe())[1].function)
+    outer_func_linenr = str(inspect.currentframe().f_back.f_lineno)
+    return outer_func_name + " " + CNAME + " / #" + outer_func_linenr + ": "
 
 
 def auto_canny(image, sigma=0.33):
@@ -93,7 +101,7 @@ class Matcher:
         else:
             hist = int(500 + (5 - ms) * 70)
             vart = int(400 + (5 - ms) * 60)
-        self.logger.debug("Creating BackgroundSubtractorKNN(history=" + str(hist) + ", dist2Threshold=" + str(vart) + ", detectShadows=True)")
+        self.logger.debug(whoami() + "Creating BackgroundSubtractorKNN(history=" + str(hist) + ", dist2Threshold=" + str(vart) + ", detectShadows=True)")
         self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, dist2Threshold=vart, detectShadows=True)
         return
 
@@ -298,6 +306,8 @@ class Matcher:
 
 
 def run_cam(cfg, child_pipe, mp_loggerqueue):
+    global CNAME
+    CNAME = cfg["name"]
 
     setproctitle("g3." + cfg["name"] + "_" + os.path.basename(__file__))
 
@@ -312,7 +322,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
 
     cam_is_ok = tm.waitforcaption()
     child_pipe.recv()
-    child_pipe.send(cam_is_ok)
+    child_pipe.send((cam_is_ok, tm.YMAX0, tm.XMAX0))
     if not cam_is_ok:
         logger.error(whoami() + "cam is not working, aborting ...")
         sys.exit()

@@ -13,7 +13,8 @@ from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize
 from keras import backend as K
 import sys
 import logging
-import tensorflow as tf
+#import tensorflow as tf
+from datetime import datetime
 
 
 TERMINATED = False
@@ -151,6 +152,7 @@ def get_camera_config(cfg):
 
 def startup_cams(camera_config, mp_loggerqueue, logger):
     mpp_cams = []
+    outvideo = None
     for i, c in enumerate(camera_config):
         if not c["active"]:
             continue
@@ -159,11 +161,11 @@ def startup_cams(camera_config, mp_loggerqueue, logger):
         mpp_cam.start()
         try:
             parent_pipe.send("query_cam_status")
-            camstatus = parent_pipe.recv()
+            camstatus, ymax, xmax = parent_pipe.recv()
         except Exception:
             camstatus = False
         if camstatus:
-            mpp_cams.append((c["name"], mpp_cam, parent_pipe, child_pipe))
+            mpp_cams.append((c["name"], mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax))
             logger.debug(whoami() + "camera " + c["name"] + " started!")
         else:
             logger.debug(whoami() + "camera " + c["name"] + " out of function, not started!")
@@ -186,20 +188,49 @@ def stop_cam(c, mpp_cams, logger):
     except Exception as e:
         logger.warning(whoami() + str(e) + "cannot stop cam!")
         return -1
-    cname, mpp_cam, parent_pipe, child_pipe = c
+    cname, mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax = c
+    if outvideo:
+        outvideo.release()
+        logger.debug(whoami() + "camera " + cname + " recording stopped")
     parent_pipe.send("stop")
     ret, _ = parent_pipe.recv()
     mpp_cam.join(5)
     if mpp_cam.is_alive():
         os.kill(mpp_cam.pid, signal.SIGKILL)
-    mpp_cams[i] = cname, None, parent_pipe, child_pipe
+    mpp_cams[i] = cname, None, parent_pipe, child_pipe, outvideo, ymax, xmax
     logger.debug(whoami() + "camera " + cname + " stopped!")
     return 1
 
 
 def destroy_all_cam_windows(mpp_cams):
-    for cname, _, _, _ in mpp_cams:
+    for cname, _, _, _, _, _, _ in mpp_cams:
         cv2.destroyWindow(cname)
+
+
+def start_recording(mpp_cams, dirs, logger):
+    fourcc = cv2.VideoWriter_fourcc('X', 'V', 'I', 'D')
+    for i, c in enumerate(mpp_cams):
+        cname, mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax = c
+        if outvideo:
+            try:
+                outvideo.release()
+            except Exception:
+                pass
+        now = datetime.now()
+        datestr = now.strftime("%d%m%Y-%H:%M:%S")
+        recordfile = dirs["video"] + cname + "_" + datestr + ".avi"
+        outvideo0 = cv2.VideoWriter(recordfile, fourcc, 10.0, (xmax, ymax))
+        mpp_cams[i] = cname, mpp_cam, parent_pipe, child_pipe, outvideo0, ymax, xmax
+        logger.debug(whoami() + "camera " + cname + " recording started: " + recordfile)
+
+
+def stop_recording(mpp_cams, logger):
+    for i, c in enumerate(mpp_cams):
+        cname, mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax = c
+        if outvideo:
+            outvideo.release()
+            mpp_cams[i] = cname, mpp_cam, parent_pipe, child_pipe, None, ymax, xmax
+            logger.debug(whoami() + "camera " + cname + " recording stopped")
 
 
 def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
@@ -230,7 +261,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     elif pd_in_cmd == "kbd_active":
         kbd_active = pd_in_param
 
-    kreta = KerasRetinaNet(dirs, cfg, logger)
+    # kreta = KerasRetinaNet(dirs, cfg, logger)
 
     while not TERMINATED:
 
@@ -250,6 +281,9 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
             ret, frame0, objlist, tx = c[2].recv()
             if ret:
                 cv2.imshow(c[0], frame0)
+                # record if active
+                if c[4]:
+                    c[4].write(frame0)
             else:
                 stop_cam(c, mpp_cams)
                 cv2.destroyWindow(c[0])
@@ -264,6 +298,10 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
                 logger.debug(whoami() + "received " + cmd)
                 if cmd == "stop":
                     break
+                elif cmd == "record on":
+                    start_recording(mpp_cams, dirs, logger)
+                elif cmd == "record off":
+                    stop_recording(mpp_cams, logger)
             except (queue.Empty, EOFError):
                 continue
             except Exception:

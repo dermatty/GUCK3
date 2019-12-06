@@ -50,6 +50,14 @@ def GeneralMsgHandler(msg, bot, state_data, cfg, mp_loggerqueue):
         if state_data.mpp_peopledetection:
             if state_data.mpp_peopledetection.pid:
                 state_data.MAINQUEUE.put((msg, None))
+    elif msg.replace(" ", "") == "recordon" and not state_data.DO_RECORD:
+        state_data.PD_OUTQUEUE.put(("record on", None))
+        state_data.DO_RECORD = True
+        reply = "Recording on all cameras started!"
+    elif msg.replace(" ", "") == "recordoff" and state_data.DO_RECORD:
+        state_data.PD_OUTQUEUE.put(("record off", None))
+        state_data.DO_RECORD = False
+        reply = "Recording on all cameras stopped!"
     elif msg == "status":
         reply, _, _, _, _ = get_status(state_data)
     else:
@@ -132,6 +140,7 @@ class StateData:
         self.PD_OUTQUEUE = None
         self.MAINQUEUE = None
         self.DIRS = None
+        self.DO_RECORD = False
 
 
 class KeyboardThread(Thread):
@@ -168,8 +177,9 @@ class KeyboardThread(Thread):
         if not self.active:
             return
         self.logger.debug(whoami() + "starting keyboard thread")
-        print("Enter commands: start / stop / exit!! / restart!! / status")
         self.running = True
+        instruction = ">> Enter commands: start stop exit!! restart!! record on/off status"
+        print(instruction)
         while self.running:
             mpp_inputto = mp.Process(target=input_to, args=(self.fn, 1, self.kbqueue, ))
             mpp_inputto.start()
@@ -178,6 +188,7 @@ class KeyboardThread(Thread):
             if self.running and msg:
                 reply = GeneralMsgHandler(msg, "kbd", self.state_data, self.cfg, self.mp_loggerqueue)
                 print(reply)
+                print(instruction)
         self.logger.debug(whoami() + "keyboard thread stopped!")
 
 
