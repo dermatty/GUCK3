@@ -47,14 +47,17 @@ def GeneralMsgHandler(msg, bot, state_data, cfg, mp_loggerqueue):
             reply = "restarting GUCK3!"
         else:
             reply = "exiting GUCK3!"
-        if state_data.mpp_peopledetection:
-            if state_data.mpp_peopledetection.pid:
-                state_data.MAINQUEUE.put((msg, None))
+        state_data.MAINQUEUE.put((msg, None))
     elif msg.replace(" ", "") == "recordon" and not state_data.DO_RECORD:
-        state_data.PD_OUTQUEUE.put(("record on", None))
-        state_data.DO_RECORD = True
-        reply = "Recording on all cameras started!"
+        if not state_data.PD_ACTIVE:
+            reply = "PeopleDetector no running, cannot start recording"
+        else:
+            state_data.PD_OUTQUEUE.put(("record on", None))
+            state_data.DO_RECORD = True
+            reply = "Recording on all cameras started!"
     elif msg.replace(" ", "") == "recordoff" and state_data.DO_RECORD:
+        if not state_data.PD_ACTIVE:
+            reply = "PeopleDetector no running, cannot stop recording"
         state_data.PD_OUTQUEUE.put(("record off", None))
         state_data.DO_RECORD = False
         reply = "Recording on all cameras stopped!"
@@ -521,6 +524,7 @@ def run():
                         state_data.mpp_peopledetection.join()
                     state_data.PD_ACTIVE = False
             elif mq_cmd == "exit!!" or mq_cmd == "restart!!":
+                
                 if mq_cmd == "restart!!":
                     RESTART = True
                 if state_data.mpp_peopledetection:
