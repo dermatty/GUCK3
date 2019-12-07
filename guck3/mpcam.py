@@ -327,8 +327,6 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
         logger.error(whoami() + "cam is not working, aborting ...")
         sys.exit()
 
-    logger.info(whoami() + "cam startup completed!")
-
     while True:
         try:
             cmd = child_pipe.recv()

@@ -13,8 +13,9 @@ from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize
 from keras import backend as K
 import sys
 import logging
-#import tensorflow as tf
 from datetime import datetime
+from threading import Thread
+
 
 # todo:
 #    each camera own thread which gets data from camera and does peopledetection
@@ -100,8 +101,10 @@ class KerasRetinaNet:
         return objlist_ret
 
 
-class Camera:
+class Camera(Thread):
     def __init__(self, ccfg, dirs, mp_loggerqueue, logger):
+        Thread.__init__(self)
+        self.daemon = True
         self.ccfg = ccfg
         self.parent_pipe, self.child_pipe = mp.Pipe()
         self.mpp = None
@@ -112,8 +115,12 @@ class Camera:
         self.is_recording = False
         self.recordfile = None
         self.frame = None
+        self.oldframe = None
         self.objlist = None
         self.tx = None
+        self.shutdown_completed = False
+        self.running = False
+        self.newframe = False
 
         self.logger = logger
         self.mp_loggerqueue = mp_loggerqueue
@@ -204,13 +211,54 @@ class Camera:
             self.mpp = None
         return self.mpp
 
-#    def run(self):
-#        if not self.active or not self.isok:
-#            return
-#        self.startup_cam()
-#        if not self.isok or not self.active:
-#            return
-#        while self.running:
+    def stop(self):
+        self.running = False
+        while not self.shutdown_completed:
+            time.sleep(0.1)
+
+    def run(self):
+        if not self.active or not self.isok:
+            return
+        self.startup_cam()
+        if not self.isok or not self.active:
+            return
+        self.running = True
+        while self.running and self.isok and self.active:
+            try:
+                self.parent_pipe.send("query")
+            except Exception as e:
+                self.logger.warning(whoami() + str(e) + ": error in communication with camera " + self.cname)
+                self.running = False
+                self.isok = False
+                break
+            while True:
+                cond1 = self.running
+                cond2 = self.parent_pipe.poll()
+                if not cond1 or cond2:
+                    break
+                time.sleep(0.05)
+            ret, frame0, objlist, tx = self.parent_pipe.recv()
+            if not cond1:
+                break
+            self.isok = ret
+            if not self.isok:
+                self.logger.warning(whoami() + ": error in communication with camera " + self.cname)
+                self.running = False
+                break
+            if ret:
+                if self.frame is not None:
+                    self.oldframe = self.frame.copy()
+                else:
+                    self.oldframe = None
+                self.frame = frame0.copy()
+            self.newframe = False
+            if self.frame is not None and self.oldframe is not None:
+                if np.bitwise_xor(self.frame, self.oldframe).any():
+                    self.newframe = True
+            self.objlist = objlist
+            self.tx = tx
+        self.shutdown()
+        self.shutdown_completed = True
 
     def start_recording(self):
         if not self.active or not self.isok:
@@ -246,17 +294,17 @@ class Camera:
 
 def shutdown_cams(cameras):
     for c in cameras:
-        c.shutdown()
+        c.stop()
 
 
 def startup_cams(cameras):
     for c in cameras:
-        c.startup_cam()
+        c.start()
 
 
 def stop_cams(cameras):
     for c in cameras:
-        c.stop_cam()
+        c.stop()
 
 
 def destroy_all_cam_windows(cameras):
@@ -375,25 +423,15 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
 
         time.sleep(0.05)
 
-        # get frames from cameras
         for c in cameras:
             if not c.active or not c.isok:
                 continue
             try:
-                c.parent_pipe.send("query")
+                if c.newframe:
+                    cv2.imshow(c.cname, c.frame)
+                    c.write_record()
             except Exception as e:
-                logger.warning(whoami() + str(e) + ": error in communication with camera " + c.cname)
-                c.shutdown(iserror=True)
-        for c in cameras:
-            if not c.active or not c.isok:
-                continue
-            ret, frame0, objlist, tx = c.parent_pipe.recv()
-            if not ret:
-                c.shutdown(iserror=True)
-            else:
-                c.set_camframe(ret, frame0, objlist, tx)
-                cv2.imshow(c.cname, frame0)
-                c.write_record()
+                print(str(e))
 
         cv2.waitKey(1) & 0xFF
 
