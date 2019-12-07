@@ -16,6 +16,9 @@ import logging
 #import tensorflow as tf
 from datetime import datetime
 
+# todo:
+#    each camera own thread which gets data from camera and does peopledetection
+
 
 TERMINATED = False
 
@@ -45,14 +48,13 @@ class KerasRetinaNet:
         sys.stdout = f
         try:
             self.RETINAMODEL = models.load_model(self.RETINA_PATH, backbone_name='resnet50')
-            # self.RETINAMODEL = models.load_model('/home/stephan/.guck3/resnet50_coco_best_v2.1.0.h5', backbone_name='resnet50')
             self.active = True
             self.logger.info(whoami() + "RetinaNet initialized!")
         except Exception as e:
             self.logger.error(whoami() + str(e) + ": cannot init RetinaNet!")
         sys.stdout = old_sys_stdout
 
-    def overlap_rects(r1, r2):
+    def overlap_rects(self, r1, r2):
         x11, y11, x12, y12 = r1
         w = abs(x12 - x11)
         h = abs(y12 - y11)
@@ -96,6 +98,183 @@ class KerasRetinaNet:
                 self.logger.info(whoami() + "!! CLASSIFIED !!")
             objlist_ret.append(id, rect, class_ai, class_ai_lt)
         return objlist_ret
+
+
+class Camera:
+    def __init__(self, ccfg, dirs, mp_loggerqueue, logger):
+        self.ccfg = ccfg
+        self.parent_pipe, self.child_pipe = mp.Pipe()
+        self.mpp = None
+        self.outvideo = None
+        self.ymax = -1
+        self.xmax = -1
+        self.dirs = dirs
+        self.is_recording = False
+        self.recordfile = None
+        self.frame = None
+        self.objlist = None
+        self.tx = None
+
+        self.logger = logger
+        self.mp_loggerqueue = mp_loggerqueue
+
+        try:
+            self.isok = True
+            self.cname = ccfg["name"]
+            self.active = ccfg["active"]
+            self.stream_url = ccfg["stream_url"]
+            self.photo_url = ccfg["photo_url"]
+            self.reboot_url = ccfg["reboot_url"]
+            self.ptz_mode = ccfg["ptz_mode"]
+            self.ptz_right_url = ccfg["ptz_right_url"]
+            self.ptz_left_url = ccfg["ptz_left_url"]
+            self.ptz_up_url = ccfg["ptz_up_url"]
+            self.ptz_down_url = ccfg["ptz_down_url"]
+            self.min_area_rect = ccfg["min_area_rect"]
+            self.hog_scale = ccfg["hog_scale"]
+            self.hog_thresh = ccfg["hog_thresh"]
+            self.mog2_sensitivity = ccfg["mog2_sensitivity"]
+            self.scanrate = ccfg["scanrate"]
+        except Exception as e:
+            self.logger.error(whoami() + str(e))
+
+        try:
+            self.fourcc = cv2.VideoWriter_fourcc('X', 'V', 'I', 'D')
+        except Exception:
+            self.logger.error(whoami() + "Cannot get fourcc, no recording possible")
+            self.fourcc = None
+
+    def shutdown(self, iserror=False):
+        self.stop_cam()
+        try:
+            cv2.destroyWindow(self.cname)
+        except Exception:
+            pass
+        self.stop_recording()
+        if iserror:
+            self.active = False
+            self.isok = False
+        self.frame = None
+
+    def set_camframe(self, ret, frame, objlist, tx):
+        self.isok = ret
+        self.frame = frame.copy()
+        self.objlist = objlist
+        self.tx = tx
+        if not self.isok:
+            self.logger.warning(whoami() + "camera " + self.cname + " is failing, stopping & deactivating ...")
+            try:
+                cv2.destroyWindow(self.cname)
+            except Exception:
+                pass
+            self.active = False
+            self.stop_cam()
+
+    def stop_cam(self):
+        if self.outvideo:
+            self.outvideo.release()
+            self.logger.debug(whoami() + "camera " + self.cname + " recording stopped")
+        if not self.active or not self.isok:
+            return 1
+        self.parent_pipe.send("stop")
+        ret, _ = self.parent_pipe.recv()
+        self.mpp.join(5)
+        if self.mpp.is_alive():
+            os.kill(self.mpp.pid, signal.SIGKILL)
+        self.mpp = None
+        self.logger.debug(whoami() + "camera " + self.cname + " stopped!")
+        return 1
+
+    def startup_cam(self):
+        if not self.active or not self.isok:
+            return None
+        self.mpp = mp.Process(target=mpcam.run_cam, args=(self.ccfg, self.child_pipe, self.mp_loggerqueue, ))
+        self.mpp.start()
+        try:
+            self.parent_pipe.send("query_cam_status")
+            self.isok, self.ymax, self.xmax = self.parent_pipe.recv()
+        except Exception:
+            self.isok = False
+            self.active = False
+        if self.isok:
+            self.logger.debug(whoami() + "camera " + self.cname + " started!")
+        else:
+            self.logger.debug(whoami() + "camera " + self.cname + " out of function, not started!")
+            self.mpp.join()
+            self.mpp = None
+        return self.mpp
+
+#    def run(self):
+#        if not self.active or not self.isok:
+#            return
+#        self.startup_cam()
+#        if not self.isok or not self.active:
+#            return
+#        while self.running:
+
+    def start_recording(self):
+        if not self.active or not self.isok:
+            return None
+        if not self.fourcc:
+            self.is_recording = False
+            self.logger.debug(whoami() + "camera " + self.cname + " no recording possible due to missing fourcc/codec!")
+        if self.outvideo:
+            try:
+                self.outvideo.release()
+            except Exception:
+                pass
+        now = datetime.now()
+        datestr = now.strftime("%d%m%Y-%H:%M:%S")
+        self.recordfile = self.dirs["video"] + self.cname + "_" + datestr + ".avi"
+        self.outvideo = cv2.VideoWriter(self.recordfile, self.fourcc, 10.0, (self.xmax, self.ymax))
+        self.is_recording = True
+        self.logger.debug(whoami() + "camera " + self.cname + " recording started: " + self.recordfile)
+
+    def write_record(self):
+        if not self.active or not self.isok:
+            return None
+        if self.outvideo and self.is_recording:
+            self.outvideo.write(self.frame)
+
+    def stop_recording(self):
+        if self.outvideo:
+            self.outvideo.release()
+            self.outvideo = None
+        self.is_recording = False
+        self.logger.debug(whoami() + "camera " + self.cname + " recording stopped")
+
+
+def shutdown_cams(cameras):
+    for c in cameras:
+        c.shutdown()
+
+
+def startup_cams(cameras):
+    for c in cameras:
+        c.startup_cam()
+
+
+def stop_cams(cameras):
+    for c in cameras:
+        c.stop_cam()
+
+
+def destroy_all_cam_windows(cameras):
+    for c in cameras:
+        try:
+            cv2.destroyWindow(c.cname)
+        except Exception:
+            continue
+
+
+def start_all_recordings(cameras):
+    for c in cameras:
+        c.start_recording()
+
+
+def stop_all_recordings(cameras):
+    for c in cameras:
+        c.stop_recording()
 
 
 # read camera data from config
@@ -150,89 +329,6 @@ def get_camera_config(cfg):
     return camera_conf
 
 
-def startup_cams(camera_config, mp_loggerqueue, logger):
-    mpp_cams = []
-    outvideo = None
-    for i, c in enumerate(camera_config):
-        if not c["active"]:
-            continue
-        parent_pipe, child_pipe = mp.Pipe()
-        mpp_cam = mp.Process(target=mpcam.run_cam, args=(c, child_pipe, mp_loggerqueue, ))
-        mpp_cam.start()
-        try:
-            parent_pipe.send("query_cam_status")
-            camstatus, ymax, xmax = parent_pipe.recv()
-        except Exception:
-            camstatus = False
-        if camstatus:
-            mpp_cams.append((c["name"], mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax))
-            logger.debug(whoami() + "camera " + c["name"] + " started!")
-        else:
-            logger.debug(whoami() + "camera " + c["name"] + " out of function, not started!")
-            mpp_cam.join()
-            camera_config[i]["active"] = False
-    return mpp_cams
-
-
-def stop_cams(mpp_cams, logger):
-    if not mpp_cams:
-        return
-    for c in mpp_cams:
-        stop_cam(c, mpp_cams, logger)
-    mpp_cams = None
-
-
-def stop_cam(c, mpp_cams, logger):
-    try:
-        i = mpp_cams.index(c)
-    except Exception as e:
-        logger.warning(whoami() + str(e) + "cannot stop cam!")
-        return -1
-    cname, mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax = c
-    if outvideo:
-        outvideo.release()
-        logger.debug(whoami() + "camera " + cname + " recording stopped")
-    parent_pipe.send("stop")
-    ret, _ = parent_pipe.recv()
-    mpp_cam.join(5)
-    if mpp_cam.is_alive():
-        os.kill(mpp_cam.pid, signal.SIGKILL)
-    mpp_cams[i] = cname, None, parent_pipe, child_pipe, outvideo, ymax, xmax
-    logger.debug(whoami() + "camera " + cname + " stopped!")
-    return 1
-
-
-def destroy_all_cam_windows(mpp_cams):
-    for cname, _, _, _, _, _, _ in mpp_cams:
-        cv2.destroyWindow(cname)
-
-
-def start_recording(mpp_cams, dirs, logger):
-    fourcc = cv2.VideoWriter_fourcc('X', 'V', 'I', 'D')
-    for i, c in enumerate(mpp_cams):
-        cname, mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax = c
-        if outvideo:
-            try:
-                outvideo.release()
-            except Exception:
-                pass
-        now = datetime.now()
-        datestr = now.strftime("%d%m%Y-%H:%M:%S")
-        recordfile = dirs["video"] + cname + "_" + datestr + ".avi"
-        outvideo0 = cv2.VideoWriter(recordfile, fourcc, 10.0, (xmax, ymax))
-        mpp_cams[i] = cname, mpp_cam, parent_pipe, child_pipe, outvideo0, ymax, xmax
-        logger.debug(whoami() + "camera " + cname + " recording started: " + recordfile)
-
-
-def stop_recording(mpp_cams, logger):
-    for i, c in enumerate(mpp_cams):
-        cname, mpp_cam, parent_pipe, child_pipe, outvideo, ymax, xmax = c
-        if outvideo:
-            outvideo.release()
-            mpp_cams[i] = cname, mpp_cam, parent_pipe, child_pipe, None, ymax, xmax
-            logger.debug(whoami() + "camera " + cname + " recording stopped")
-
-
 def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     global TERMINATED
 
@@ -246,12 +342,18 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
 
-    camera_config = get_camera_config(cfg)
-    mpp_cams = startup_cams(camera_config, mp_loggerqueue, logger)
-
     sh = SigHandler_pd(logger)
     signal.signal(signal.SIGINT, sh.sighandler_pd)
     signal.signal(signal.SIGTERM, sh.sighandler_pd)
+
+    cameras = []
+    camera_config = get_camera_config(cfg)
+
+    for c in camera_config:
+        camera = Camera(c, dirs, mp_loggerqueue, logger)
+        cameras.append(camera)
+
+    startup_cams(cameras)
 
     tgram_active = False
     kbd_active = False
@@ -260,6 +362,12 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
         tgram_active = pd_in_param
     elif pd_in_cmd == "kbd_active":
         kbd_active = pd_in_param
+    if not camera_config or not cameras:
+        logger.error(whoami() + "cannot get correct config for cameras, exiting ...")
+        pd_outqueue.put(("error:config", None))
+        sys.exit()
+    else:
+        pd_outqueue.put(("allok", None))
 
     # kreta = KerasRetinaNet(dirs, cfg, logger)
 
@@ -268,26 +376,24 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
         time.sleep(0.05)
 
         # get frames from cameras
-        camlist = []
-        for i, c in enumerate(mpp_cams):
-            camlist.append((None, None, None, None, None))
-            if not c[1]:
-                camlist[i] = (c[0], None, None, None, None)
+        for c in cameras:
+            if not c.active or not c.isok:
                 continue
-            c[2].send("query")
-        for i, c in enumerate(mpp_cams):
-            if not c[1]:
+            try:
+                c.parent_pipe.send("query")
+            except Exception as e:
+                logger.warning(whoami() + str(e) + ": error in communication with camera " + c.cname)
+                c.shutdown(iserror=True)
+        for c in cameras:
+            if not c.active or not c.isok:
                 continue
-            ret, frame0, objlist, tx = c[2].recv()
-            if ret:
-                cv2.imshow(c[0], frame0)
-                # record if active
-                if c[4]:
-                    c[4].write(frame0)
+            ret, frame0, objlist, tx = c.parent_pipe.recv()
+            if not ret:
+                c.shutdown(iserror=True)
             else:
-                stop_cam(c, mpp_cams)
-                cv2.destroyWindow(c[0])
-                # restart / Meldung
+                c.set_camframe(ret, frame0, objlist, tx)
+                cv2.imshow(c.cname, frame0)
+                c.write_record()
 
         cv2.waitKey(1) & 0xFF
 
@@ -299,15 +405,14 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
                 if cmd == "stop":
                     break
                 elif cmd == "record on":
-                    start_recording(mpp_cams, dirs, logger)
+                    start_all_recordings(cameras)
                 elif cmd == "record off":
-                    stop_recording(mpp_cams, logger)
+                    stop_all_recordings(cameras)
             except (queue.Empty, EOFError):
                 continue
             except Exception:
                 continue
 
-    stop_cams(mpp_cams, logger)
-    cv2.destroyAllWindows()
+    shutdown_cams(cameras)
     clear_all_queues([pd_inqueue, pd_outqueue])
     logger.info(whoami() + "... exited!")

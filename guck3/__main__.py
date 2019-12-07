@@ -498,7 +498,22 @@ def run():
                 mpp_peopledetection.start()
                 state_data.mpp_peopledetection = mpp_peopledetection
                 state_data.PD_OUTQUEUE.put((mq_param + "_active", True))
-                state_data.PD_ACTIVE = True
+                try:
+                    pd_answer, pd_prm = state_data.PD_INQUEUE.get()
+                    if "error" in pd_answer:
+                        state_data.PD_ACTIVE = False
+                        state_data.mpp_peopledetection.join()
+                    else:
+                        state_data.PD_ACTIVE = True
+                except Exception as e:
+                    logger.error(whoami() + str(e) + ": cannot communicate with peopledetection, trying to exit!")
+                    state_data.PD_ACTIVE = False
+                    try:
+                        os.kill(mpp_peopledetection.pid, signal.SIGKILL)
+                        mpp_peopledetection.join(timeout=5)
+                    except Exception:
+                        pass
+                    TERMINATED = True
             elif mq_cmd == "stop":
                 if state_data.mpp_peopledetection:
                     if state_data.mpp_peopledetection.pid:
@@ -518,7 +533,6 @@ def run():
             pass
         except Exception:
             pass
-
 
     # shutdown
     exitcode = 1
