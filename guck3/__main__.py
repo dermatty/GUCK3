@@ -144,6 +144,7 @@ class StateData:
         self.MAINQUEUE = None
         self.DIRS = None
         self.DO_RECORD = False
+        self.CAMERADATA = []
 
 
 class KeyboardThread(Thread):
@@ -168,6 +169,11 @@ class KeyboardThread(Thread):
 
     def sighandler_kbd(self, a,  b):
         self.running = False
+
+    def send_message_all(self, txt):
+        if not self.active:
+            return
+        print(txt)
 
     def stop(self):
         if not self.active:
@@ -238,6 +244,8 @@ class TelegramThread:
         self.running = False
 
     def send_message_all(self, text):
+        if not self.active:
+            return
         for c in self.chatids:
             try:
                 self.bot.send_message(chat_id=c, text=text)
@@ -336,7 +344,7 @@ def get_status(state_data):
         gputemp = subprocess.Popen([smifn, "--query-gpu=temperature.gpu", "--format=csv"],
                                    stdout=subprocess.PIPE).stdout.readlines()[1]
         gpuutil = subprocess.Popen([smifn, "--query-gpu=utilization.gpu", "--format=csv"],
-                               stdout=subprocess.PIPE).stdout.readlines()[1]
+                                   stdout=subprocess.PIPE).stdout.readlines()[1]
         gputemp_str = gputemp.decode("utf-8").rstrip()
         gpuutil_str = gpuutil.decode("utf-8").rstrip()
     except Exception:
@@ -349,32 +357,25 @@ def get_status(state_data):
         gpu_crit = False
 
     cam_crit = False
-    '''ret += "\n------- Cameras -------"
-    camstate = []
-    for key, value in FPS.items():
-        ctstatus0 = "n/a"
-        dt = 0.0
-        mog = -1
-        j = 0
-        for i in shmlist:
-            try:
-                sname, frame, ctstatus, _, tx0 = i
-                if key == sname:
-                    mog = MOGSENS[j]
-                    dt = time.time() - tx0
-                    if dt > 30:
-                        ctstatus0 = "DOWN"
-                    elif dt > 3:
-                        ctstatus0 = "DELAYED"
-                    else:
-                        ctstatus0 = "running"
-                    camstate.append(ctstatus0)
-            except:
-                pass
-            j += 1
-        ret += "\n" + key + " " + ctstatus0 + " @ %3.1f fps\r" % value + ", sens.=" + str(mog) + " (%.2f" % dt + " sec. ago)"
-    if len([c for c in camstate if c != "running"]) > 0:
-        cam_crit = True'''
+    if state_data.PD_ACTIVE:
+        ret += "\n------- Cameras -------"
+        for c in state_data.CAMERADATA:
+            cname, cframe, cfps, cisok, cactive, ctx = c
+            dt = time.time() - ctx
+            if not cactive:
+                ctstatus0 = "DISABLED"
+            elif dt > 30 or not cisok:
+                ctstatus0 = "DOWN"
+            elif dt > 3:
+                ctstatus0 = "DELAYED"
+            else:
+                ctstatus0 = "running"
+            if ctstatus0 in ["DOWN", "DELAYED"]:
+                cam_crit = True
+            else:
+                cam_crit = False
+            ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
+
     ret += "\n------- System Summary -------"
     ret += "\nRAM: "
     ret += "CRITICAL!" if mem_crit else "OK!"
@@ -479,16 +480,27 @@ def run():
     state_data.KB = KeyboardThread(state_data, cfg, mp_loggerqueue, logger)
     state_data.KB.start()
 
-    while not TERMINATED:
-        time.sleep(0.1)
+    commlist = [state_data.TG, state_data.KB]
 
-        # get el from peopledetection queue
-        try:
-            pd_cmd, pd_params = state_data.PD_INQUEUE.get_nowait()
-        except (queue.Empty, EOFError):
-            pass
-        except Exception:
-            pass
+    while not TERMINATED:
+        time.sleep(0.05)
+
+        # get el from peopledetection queue (clear it always!!)
+        pdmsglist = []
+        while True:
+            try:
+                pdmsglist = state_data.PD_INQUEUE.get_nowait()
+            except (queue.Empty, EOFError):
+                break
+            except Exception:
+                break
+        if pdmsglist:
+            state_data.CAMERADATA = []
+            for pdmsg, pdpar in pdmsglist:
+                state_data.CAMERADATA.append(pdpar)
+                if pdmsg == "detection":
+                    for c in commlist:
+                        c.send_message_all("Human detected!")
 
         # get el from main queue (GeneralMsgHandler)
         # because we cannot start pdedector from thread! (keras/tf bug)

@@ -14,7 +14,7 @@ from keras import backend as K
 import sys
 import logging
 from datetime import datetime
-from threading import Thread
+from threading import Thread, Lock
 
 
 # todo:
@@ -69,12 +69,12 @@ class KerasRetinaNet:
         overlapArea = x_overlap * y_overlap
         return overlapArea, overlapArea/area1, overlapArea/area2
 
-    def get_cnn_classification(self, frame, objlist):
-        if not self.active:
+    def get_cnn_classification(self, camera):
+        if not self.active or not camera.active and camera.frame is not None:
             return
-        objlist_ret = []
-        for o in objlist:
-            id, rect, class_ai, class_ai_lt = o
+        frame = camera.frame.copy()
+        cnn_classified_list = []
+        for x, y, w, h in camera.rects:
             found = True
             image = preprocess_image(frame)
             image, scale = resize_image(image)
@@ -86,7 +86,6 @@ class KerasRetinaNet:
                     continue
                 b = box.astype(int)
                 r1 = (b[0], b[1], b[2], b[3])
-                x, y, w, h = rect
                 r2 = (x, y, x + w, y + h)
                 overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
                 if (ratio1 > 0.70 or ratio2 > 0.70):
@@ -94,11 +93,10 @@ class KerasRetinaNet:
                     found = True
                     break
             if found:
-                class_ai_lt = time.time()
-                class_ai += 1
+                cnn_classified_list.append((min(x, b[0]), min(y, b[1]), max(x + w, b[2]), max (y + h, b[3])))
                 self.logger.info(whoami() + "!! CLASSIFIED !!")
-            objlist_ret.append(id, rect, class_ai, class_ai_lt)
-        return objlist_ret
+        camera.cnn_classified_list = cnn_classified_list
+        return
 
 
 class Camera(Thread):
@@ -116,11 +114,14 @@ class Camera(Thread):
         self.recordfile = None
         self.frame = None
         self.oldframe = None
-        self.objlist = None
+        self.rects = []
         self.tx = None
         self.shutdown_completed = False
         self.running = False
         self.newframe = False
+        self.cnn_classified_list = []
+        self.fpslist = []
+        self.lock = Lock()
 
         self.logger = logger
         self.mp_loggerqueue = mp_loggerqueue
@@ -151,6 +152,16 @@ class Camera(Thread):
             self.logger.error(whoami() + "Cannot get fourcc, no recording possible")
             self.fourcc = None
 
+    def get_fps(self):
+        with self.lock:
+            if len(self.fpslist) == 0:
+                fps = 0
+            else:
+                fps = sum([f for f in self.fpslist]) / len(self.fpslist)
+                if len(self.fpslist) > 20:
+                    del self.fpslist[0]
+        return fps
+
     def shutdown(self, iserror=False):
         self.stop_cam()
         try:
@@ -162,20 +173,6 @@ class Camera(Thread):
             self.active = False
             self.isok = False
         self.frame = None
-
-    def set_camframe(self, ret, frame, objlist, tx):
-        self.isok = ret
-        self.frame = frame.copy()
-        self.objlist = objlist
-        self.tx = tx
-        if not self.isok:
-            self.logger.warning(whoami() + "camera " + self.cname + " is failing, stopping & deactivating ...")
-            try:
-                cv2.destroyWindow(self.cname)
-            except Exception:
-                pass
-            self.active = False
-            self.stop_cam()
 
     def stop_cam(self):
         if self.outvideo:
@@ -224,6 +221,7 @@ class Camera(Thread):
             return
         self.running = True
         while self.running and self.isok and self.active:
+            t_query = time.time()
             try:
                 self.parent_pipe.send("query")
             except Exception as e:
@@ -237,7 +235,11 @@ class Camera(Thread):
                 if not cond1 or cond2:
                     break
                 time.sleep(0.05)
-            ret, frame0, objlist, tx = self.parent_pipe.recv()
+            ret, frame0, rects, tx = self.parent_pipe.recv()
+            self.tx = tx
+            t_reply = time.time()
+            with self.lock:
+                self.fpslist.append(1 / (t_reply - t_query))
             if not cond1:
                 break
             self.isok = ret
@@ -255,10 +257,31 @@ class Camera(Thread):
             if self.frame is not None and self.oldframe is not None:
                 if np.bitwise_xor(self.frame, self.oldframe).any():
                     self.newframe = True
-            self.objlist = objlist
-            self.tx = tx
+            self.rects = rects
         self.shutdown()
         self.shutdown_completed = True
+
+    def get_new_detections(self, cnn=True):
+        if cnn:
+            return self.cnn_classified_list
+        else:
+            return self.rects
+
+    def clear_new_detections(self):
+        self.cnn_classified_list = []
+        self.rect = []
+
+    def draw_detections(self, cnn=True):
+        if cnn:
+            rects = self.cnn_classified_list
+        else:
+            rects = self.rects
+        if self.frame is not None:
+            # draw detections
+            for x, y, w, h in rects:
+                outstr = "DETECTION!"
+                cv2.rectangle(self.frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                cv2.putText(self.frame, outstr, (x + 3, y+h-10), cv2.FONT_HERSHEY_DUPLEX, 0.3, (0, 255, 0))
 
     def start_recording(self):
         if not self.active or not self.isok:
@@ -417,23 +440,43 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     else:
         pd_outqueue.put(("allok", None))
 
-    # kreta = KerasRetinaNet(dirs, cfg, logger)
+    kreta = KerasRetinaNet(dirs, cfg, logger)
+    try:
+        showframes = True if cfg["OPTIONS"]["SHOWFRAMES"].lower() == "yes" else False
+    except Exception:
+        logger.warning(whoami() + "showframes not set in config, setting to default False!")
+        showframes = False
 
     while not TERMINATED:
 
         time.sleep(0.05)
 
-        for c in cameras:
-            if not c.active or not c.isok:
-                continue
-            try:
-                if c.newframe:
-                    cv2.imshow(c.cname, c.frame)
-                    c.write_record()
-            except Exception as e:
-                print(str(e))
+        mainmsglist = []
 
-        cv2.waitKey(1) & 0xFF
+        for c in cameras:
+            mainmsg = "status"
+            mainparams = (c.cname, c.frame, c.get_fps(), c.isok, c.active, c.tx)
+            if c.active and c.isok:
+                try:
+                    if c.newframe:
+                        kreta.get_cnn_classification(c)
+                        c.draw_detections(cnn=True)
+                        if showframes:
+                            cv2.imshow(c.cname, c.frame)
+                        c.write_record()
+                        new_detections = c.get_new_detections()
+                        if new_detections:
+                            mainmsg = "detection"
+                        c.clear_new_detections()
+                except Exception as e:
+                    logger.warning(whoami() + str(e))
+            mainmsglist.append((mainmsg, mainparams))
+
+        # send to __main__.py
+        pd_outqueue.put(mainmsglist)
+
+        if showframes:
+            cv2.waitKey(1) & 0xFF
 
         # telegram handler
         if tgram_active or kbd_active:
