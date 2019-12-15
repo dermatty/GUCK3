@@ -18,6 +18,7 @@ from telegram.ext import Updater, MessageHandler, Filters
 import subprocess
 from threading import Thread
 from keras_retinanet import models
+import cv2
 
 
 TERMINATED = False
@@ -467,6 +468,24 @@ def run():
     signal.signal(signal.SIGINT, sh.sighandler_g3)
     signal.signal(signal.SIGTERM, sh.sighandler_g3)
 
+    # save photos setup
+    try:
+        save_photos = cfg["OPTIONS"]["STOREPHOTOS"].lower() == "yes"
+        addtl_photo_path = cfg["OPTIONS"]["ADDTL_PHOTO_PATH"]
+        if addtl_photo_path.lower() == "none":
+            addtl_photo_path = None
+        else:
+            if addtl_photo_path[-1] != "/":
+                addtl_photo_path += "/"
+            if not os.path.exists(addtl_photo_path):
+                logger.warning(whoami() + "photo path does not exist, setting to None!")
+                save_photos = False
+                addtl_photo_path = None
+    except Exception as e:
+        logger.warning(whoami() + str(e) + ": setting 'store_photos' to None!")
+        save_photos = False
+        addtl_photo_path = None
+
     # init queues
     state_data.PD_INQUEUE = mp.Queue()
     state_data.PD_OUTQUEUE = mp.Queue()
@@ -483,7 +502,7 @@ def run():
     commlist = [state_data.TG, state_data.KB]
 
     while not TERMINATED:
-        time.sleep(0.05)
+        time.sleep(0.02)
 
         # get el from peopledetection queue (clear it always!!)
         pdmsglist = []
@@ -497,13 +516,26 @@ def run():
         if pdmsglist:
             state_data.CAMERADATA = []
             for pdmsg, pdpar in pdmsglist:
+                c_cname, c_frame, _, _, _, _ = pdpar
                 state_data.CAMERADATA.append(pdpar)
                 if pdmsg == "detection":
                     for c in commlist:
-                        c.send_message_all("Human detected!")
+                        c.send_message_all(str(datetime.datetime.now()) + ": Human detected @ camera " + c_cname + "!")
+                    # save photo
+                    if save_photos:
+                        datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
+                        photo_name = dirs["photo"] + c_cname + "_" + datestr + ".jpg"
+                        try:
+                            cv2.imwrite(photo_name, c_frame)
+                            if addtl_photo_path:
+                                photo_name = addtl_photo_path + c_cname + "_" + datestr + ".jpg"
+                                cv2.imwrite(photo_name, c_frame)
+                            logger.debug(whoami() + "saved detection photo " + photo_name)
+                        except Exception as e:
+                            logger.warning(whoami() + str(e))
 
         # get el from main queue (GeneralMsgHandler)
-        # because we cannot start pdedector from thread! (keras/tf bug)
+        # because we cannot start pdedector from thread! (keras/tf bug/feature!?)
         try:
             mq_cmd, mq_param = state_data.MAINQUEUE.get_nowait()
             if mq_cmd == "start":

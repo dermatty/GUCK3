@@ -93,7 +93,8 @@ class KerasRetinaNet:
                     found = True
                     break
             if found:
-                cnn_classified_list.append((min(x, b[0]), min(y, b[1]), max(x + w, b[2]), max (y + h, b[3])))
+                cnn_classified_list.append(r1)
+                # cnn_classified_list.append((min(x, b[0]), min(y, b[1]), max(x + w, b[2]), max (y + h, b[3])))
                 self.logger.info(whoami() + "!! CLASSIFIED !!")
         camera.cnn_classified_list = cnn_classified_list
         return
@@ -277,11 +278,16 @@ class Camera(Thread):
         else:
             rects = self.rects
         if self.frame is not None:
+            ymax0, xmax0 = self.frame.shape[:2]
             # draw detections
             for x, y, w, h in rects:
+                x1 = max(0, x)
+                y1 = max(0, y)
+                x2 = min(x + w, xmax0)
+                y2 = min(y + h, ymax0)
                 outstr = "DETECTION!"
-                cv2.rectangle(self.frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-                cv2.putText(self.frame, outstr, (x + 3, y+h-10), cv2.FONT_HERSHEY_DUPLEX, 0.3, (0, 255, 0))
+                cv2.rectangle(self.frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(self.frame, outstr, (x1 + 3, y2 - 10), cv2.FONT_HERSHEY_DUPLEX, 0.3, (0, 255, 0))
 
     def start_recording(self):
         if not self.active or not self.isok:
@@ -449,7 +455,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
 
     while not TERMINATED:
 
-        time.sleep(0.05)
+        time.sleep(0.04)
 
         mainmsglist = []
 
@@ -461,6 +467,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
                     if c.newframe:
                         kreta.get_cnn_classification(c)
                         c.draw_detections(cnn=True)
+                        mainparams = (c.cname, c.frame, c.get_fps(), c.isok, c.active, c.tx)
                         if showframes:
                             cv2.imshow(c.cname, c.frame)
                         c.write_record()
