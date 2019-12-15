@@ -482,7 +482,7 @@ def run():
                 save_photos = False
                 addtl_photo_path = None
     except Exception as e:
-        logger.warning(whoami() + str(e) + ": setting 'store_photos' to None!")
+        logger.warning(whoami() + str(e) + ": setting 'store_photos' to 'No'!")
         save_photos = False
         addtl_photo_path = None
 
@@ -524,12 +524,13 @@ def run():
                     # save photo
                     if save_photos:
                         datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
-                        photo_name = dirs["photo"] + c_cname + "_" + datestr + ".jpg"
+                        short_photo_name = c_cname + "_" + datestr + ".jpg"
+                        photo_name = dirs["photo"] + short_photo_name
                         try:
                             cv2.imwrite(photo_name, c_frame)
                             if addtl_photo_path:
-                                photo_name = addtl_photo_path + c_cname + "_" + datestr + ".jpg"
-                                cv2.imwrite(photo_name, c_frame)
+                                photo_name2 = addtl_photo_path + c_cname + "_" + datestr + ".jpg"
+                                cv2.imwrite(photo_name2, c_frame)
                             logger.debug(whoami() + "saved detection photo " + photo_name)
                         except Exception as e:
                             logger.warning(whoami() + str(e))
@@ -568,7 +569,6 @@ def run():
                         state_data.mpp_peopledetection.join()
                     state_data.PD_ACTIVE = False
             elif mq_cmd == "exit!!" or mq_cmd == "restart!!":
-                
                 if mq_cmd == "restart!!":
                     RESTART = True
                 if state_data.mpp_peopledetection:
