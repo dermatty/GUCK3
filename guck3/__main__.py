@@ -6,7 +6,7 @@ import json
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, webflask
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -101,6 +101,14 @@ class SigHandler_g3:
                 self.state_data.PD_OUTQUEUE.put("stop")
                 mp_pd.join()
                 print(self.get_trstr(exit_status) + "peopledetection exited!")
+        mp_wf = self.state_data.mpp_webflask
+        trstr = self.get_trstr(exit_status)
+        if mp_wf:
+            if mp_wf.pid:
+                print(trstr + "joining flask webserver ...")
+                os.kill(mp_wf.pid, signal.SIGTERM)
+                mp_wf.join()
+                print(self.get_trstr(exit_status) + "flask webserver exited!")
         trstr = self.get_trstr(exit_status)
         if self.mp_loglistener:
             if self.mp_loglistener.pid:
@@ -138,6 +146,7 @@ class StateData:
     def __init__(self):
         self.PD_ACTIVE = False
         self.mpp_peopledetection = None
+        self.mpp_webflask = None
         self.TG = None
         self.KB = None
         self.PD_INQUEUE = None
@@ -490,6 +499,10 @@ def run():
     state_data.PD_INQUEUE = mp.Queue()
     state_data.PD_OUTQUEUE = mp.Queue()
     state_data.MAINQUEUE = queue.Queue()
+
+    # WebServer
+    state_data.mpp_webflask = mp.Process(target=webflask.main, args=(cfg, dirs, mp_loggerqueue, ))
+    state_data.mpp_webflask.start()
 
     # Telegram
     state_data.TG = TelegramThread(state_data, cfg, mp_loggerqueue, logger)
