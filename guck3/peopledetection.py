@@ -143,7 +143,6 @@ class Camera(Thread):
             self.hog_scale = ccfg["hog_scale"]
             self.hog_thresh = ccfg["hog_thresh"]
             self.mog2_sensitivity = ccfg["mog2_sensitivity"]
-            self.scanrate = ccfg["scanrate"]
         except Exception as e:
             self.logger.error(whoami() + str(e))
 
@@ -380,7 +379,6 @@ def get_camera_config(cfg):
             hog_scale = float(cfg[snrstr]["HOG_SCALE"])
             hog_thresh = float(cfg[snrstr]["HOG_THRESH"])
             mog2_sensitivity = float(cfg[snrstr]["MOG2_SENSITIVITY"])
-            scanrate = float(cfg[snrstr]["SCANRATE"])
         except Exception:
             continue
         cdata = {
@@ -398,7 +396,6 @@ def get_camera_config(cfg):
             "hog_scale": hog_scale,
             "hog_thresh": hog_thresh,
             "mog2_sensitivity": mog2_sensitivity,
-            "scanrate": scanrate
         }
         camera_conf.append(cdata)
     if not camera_conf:
