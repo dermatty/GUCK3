@@ -8,6 +8,7 @@ import logging
 import logging.handlers
 from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, webflask
 from guck3.mplogging import whoami
+from guck3.g3db import G3DB
 import datetime
 import signal
 import sys
@@ -17,7 +18,6 @@ import queue
 from telegram.ext import Updater, MessageHandler, Filters
 import subprocess
 from threading import Thread
-from keras_retinanet import models
 import cv2
 
 
@@ -25,7 +25,7 @@ TERMINATED = False
 RESTART = False
 
 
-def GeneralMsgHandler(msg, bot, state_data, cfg, mp_loggerqueue):
+def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     global TERMINATED
     global RESTART
     # bot = tgram / kbd
@@ -158,14 +158,14 @@ class StateData:
 
 
 class KeyboardThread(Thread):
-    def __init__(self, state_data, cfg, mp_loggerqueue, logger):
+    def __init__(self, state_data, db, mp_loggerqueue, logger):
         Thread.__init__(self)
         self.daemon = True
         self.state_data = state_data
         self.mp_loggerqueue = mp_loggerqueue
         self.pd_inqueue = self.state_data.PD_INQUEUE
         self.pd_outqueue = self.state_data.PD_OUTQUEUE
-        self.cfg = cfg
+        self.db = db
         self.logger = logger
         self.running = False
         self.active = self.get_config()
@@ -174,7 +174,7 @@ class KeyboardThread(Thread):
         self.is_shutdown = False
 
     def get_config(self):
-        active = True if self.cfg["KEYBOARD"]["ACTIVE"].lower() == "yes" else False
+        active = self.db.get_options()["keyboard_active"]
         return active
 
     def sighandler_kbd(self, a,  b):
@@ -205,21 +205,21 @@ class KeyboardThread(Thread):
             msg = self.kbqueue.get()
             mpp_inputto.join()
             if self.running and msg:
-                reply = GeneralMsgHandler(msg, "kbd", self.state_data, self.cfg, self.mp_loggerqueue)
+                reply = GeneralMsgHandler(msg, "kbd", self.state_data, self.mp_loggerqueue)
                 print(reply)
                 print(instruction)
         self.logger.debug(whoami() + "keyboard thread stopped!")
 
 
 class TelegramThread:
-    def __init__(self, state_data, cfg, mp_loggerqueue, logger):
+    def __init__(self, state_data, db, mp_loggerqueue, logger):
         self.state_data = state_data
         self.mp_loggerqueue = mp_loggerqueue
         self.pd_inqueue = self.state_data.PD_INQUEUE
         self.pd_outqueue = self.state_data.PD_OUTQUEUE
-        self.cfg = cfg
+        self.db = db
         self.logger = logger
-        self.active, self.token, self.chatids = self.get_config(self.cfg, self.logger)
+        self.active, self.token, self.chatids = self.get_config()
         self.running = False
 
     def start(self):
@@ -262,22 +262,23 @@ class TelegramThread:
             except Exception as e:
                 self.logger.warning(whoami() + str(e) + ": chat_id " + str(c))
 
-    def get_config(self, cfg, logger):
-        active = True if cfg["TELEGRAM"]["ACTIVE"].lower() == "yes" else False
+    def get_config(self):
+        t = self.db.get_telegram()
+        active = t["active"]
         if not active:
             return False, None, None
         try:
-            token = cfg["TELEGRAM"]["TOKEN"]
-            chatids = json.loads(cfg.get("TELEGRAM", "CHATIDS"))
-            logger.debug(whoami() + "got config for active telegram bot")
+            token = t["token"]
+            chatids = t["chatids"]
+            self.logger.debug(whoami() + "got config for active telegram bot")
         except Exception as e:
-            logger.debug(whoami() + str(e) + "telegram config error, setting telegram to inactive!")
+            self.logger.debug(whoami() + str(e) + "telegram config error, setting telegram to inactive!")
             return False, None, None
         return active, token, chatids
 
     def handler(self, update, context):
         msg = update.message.text.lower()
-        reply = GeneralMsgHandler(msg, "tgram", self.state_data, self.cfg, self.mp_loggerqueue)
+        reply = GeneralMsgHandler(msg, "tgram", self.state_data, self.mp_loggerqueue)
         update.message.reply_text(reply)
 
 
@@ -470,6 +471,15 @@ def run():
     logger.debug(whoami() + "starting with loglevel '" + loglevel_str + "'")
     logger.info(whoami() + "Welcome to GUCK3 " + os.environ["GUCK3_VERSION"])
 
+    # init DB
+    mplock = mp.Lock()
+    db = G3DB(mplock, cfg, dirs, logger)
+    db.copy_cfg_to_db()    # read cfg file to DB
+    if not db.copyok:
+        logger.error(whoami() + ": cannot init DB, exiting")
+        db.close()
+        return -1
+
     # sighandler
     sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, state_data, old_sys_stdout, logger)
     old_sigint = signal.getsignal(signal.SIGINT)
@@ -479,15 +489,13 @@ def run():
 
     # save photos setup
     try:
-        save_photos = cfg["OPTIONS"]["STOREPHOTOS"].lower() == "yes"
-        addtl_photo_path = cfg["OPTIONS"]["ADDTL_PHOTO_PATH"]
+        options = db.get_options()
+        save_photos = options["storephotos"]
+        addtl_photo_path = options["addtl_photo_path"]
         if addtl_photo_path.lower() == "none":
             addtl_photo_path = None
         else:
-            if addtl_photo_path[-1] != "/":
-                addtl_photo_path += "/"
-            if not os.path.exists(addtl_photo_path):
-                logger.warning(whoami() + "photo path does not exist, setting to None!")
+            if addtl_photo_path == "None":
                 save_photos = False
                 addtl_photo_path = None
     except Exception as e:
@@ -505,11 +513,11 @@ def run():
     state_data.mpp_webflask.start()
 
     # Telegram
-    state_data.TG = TelegramThread(state_data, cfg, mp_loggerqueue, logger)
+    state_data.TG = TelegramThread(state_data, db, mp_loggerqueue, logger)
     state_data.TG.start()
 
     # KeyboardThread
-    state_data.KB = KeyboardThread(state_data, cfg, mp_loggerqueue, logger)
+    state_data.KB = KeyboardThread(state_data, db, mp_loggerqueue, logger)
     state_data.KB.start()
 
     commlist = [state_data.TG, state_data.KB]
@@ -599,6 +607,10 @@ def run():
     exitcode = 1
     if RESTART:
         exitcode = 3
+    ret = db.copy_db_to_cfg()
+    if ret == -1:
+        exitcode = -1
+    db.close()
     sh.shutdown(exitcode)
     if sys.stdout != old_sys_stdout:
         sys.stdout = old_sys_stdout
