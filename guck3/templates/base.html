@@ -14,7 +14,7 @@
          .navbar-brand { font-size: 32px;}
          .navbar-nav>li>a{color: white;}
         </style>
-        <title>WASTL</title>
+        <title>GUCK 3</title>
     </head>
     
     <body>
@@ -42,22 +42,22 @@
              source.addEventListener(eventtype_paused, function(event) {
                  var data = JSON.parse(event.data);
                  $("#nralarms").html(data.message);
-                 document.title = "WASTL ...";
+                 document.title = "GUCK 3 ...";
              }, false);
              // listener for showing red
              source.addEventListener(eventtype_guck, function(event) {
                  var data = JSON.parse(event.data);
                  $("#nralarms").html(data.message);
-                 document.title = "WASTL";
+                 document.title = "GUCK 3";
              }, false);
              // listener for nr_detections in title_bar
              source.addEventListener(eventtype_title, function(event) {
                  var data = JSON.parse(event.data);
                  var nr = data.message;
                  if (Number(nr) > 0) {
-                     document.title = "WASTL (" + data.message + ")";
+                     document.title = "GUCK 3 (" + data.message + ")";
                  } else {
-                     document.title = "WASTL";
+                     document.title = "GUCK 3";
                  }
              }, false);
              source.addEventListener('error', function(event) { }, false);
@@ -66,7 +66,7 @@
         <nav class="navbar navbar-inverse navbar-custom">
             <div class="container-fluid">
                 <div class="navbar-header" id="header1">
-                    <a class="navbar-brand" href="#">WASTL</a>
+                    <a class="navbar-brand" href="#">GUCK 3</a>
                 </div>
                 {% set navbar0_dd = [("home","/home","Home",".", ".", ".", ".", ".",".",".")] %}
                 <!-- >("livecam", "/livecam","LiveCam",".", ".", ".", ".", ".",".","."), 

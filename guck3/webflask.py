@@ -2,7 +2,7 @@ from __future__ import unicode_literals
 import multiprocessing
 import gunicorn.app.base
 import os
-from flask import Flask, render_template, make_response, request, g, redirect, url_for, flash, session
+from flask import Flask, render_template, make_response, request, g, redirect, url_for, session
 from flask.logging import default_handler
 from flask_sse import sse
 from flask_session import Session
@@ -169,8 +169,11 @@ def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
     global DB
     global USERS
     global USERDATA
+    global DIRS
 
     setproctitle("g3." + os.path.basename(__file__))
+
+    DIRS = dirs
 
     log_handler = logging.FileHandler(dirs["logs"] + "webflask.log", mode="w")
     log_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
