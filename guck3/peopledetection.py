@@ -15,7 +15,7 @@ import sys
 import logging
 from datetime import datetime
 from threading import Thread, Lock
-
+from guck3.g3db import G3DB
 
 # todo:
 #    each camera own thread which gets data from camera and does peopledetection
@@ -38,12 +38,12 @@ class SigHandler_pd:
 
 
 class KerasRetinaNet:
-    def __init__(self, dirs, cfg, logger):
+    def __init__(self, dirs, db, logger):
         self.logger = logger
         self.active = False
-        self.cfg = cfg
+        self.db = db
         self.dirs = dirs
-        self.RETINA_PATH = self.dirs["main"] + self.cfg["OPTIONS"]["RETINANET_MODEL"]
+        self.RETINA_PATH = self.dirs["main"] + self.db.get_options()["retinanet_model"]
         old_sys_stdout = sys.stdout
         f = open('/dev/null', 'w')
         sys.stdout = f
@@ -353,57 +353,7 @@ def stop_all_recordings(cameras):
         c.stop_recording()
 
 
-# read camera data from config
-def get_camera_config(cfg):
-    snr = 0
-    idx = 0
-    camera_conf = []
-    while idx < 99:
-        idx += 1
-        try:
-            snr += 1
-            snrstr = "CAMERA" + str(snr)
-            active = True if cfg[snrstr]["ACTIVE"].lower() == "yes" else False
-            camera_name = cfg[snrstr]["NAME"]
-            stream_url = cfg[snrstr]["STREAM_URL"]
-            photo_url = cfg[snrstr]["PHOTO_URL"]
-            reboot_url = cfg[snrstr]["REBOOT_URL"]
-            ptz_mode = cfg[snrstr]["PTZ_MODE"].lower()
-            if ptz_mode not in ["start", "startstop", "none"]:
-                ptz_mode = "none"
-            ptz_right_url = cfg[snrstr]["PTZ_RIGHT_URL"]
-            ptz_left_url = cfg[snrstr]["PTZ_LEFT_URL"]
-            ptz_up_url = cfg[snrstr]["PTZ_UP_URL"]
-            ptz_down_url = cfg[snrstr]["PTZ_DOWN_URL"]
-            min_area_rect = int(cfg[snrstr]["MIN_AREA_RECT"])
-            hog_scale = float(cfg[snrstr]["HOG_SCALE"])
-            hog_thresh = float(cfg[snrstr]["HOG_THRESH"])
-            mog2_sensitivity = float(cfg[snrstr]["MOG2_SENSITIVITY"])
-        except Exception:
-            continue
-        cdata = {
-            "name": camera_name,
-            "active": active,
-            "stream_url": stream_url,
-            "photo_url": photo_url,
-            "reboot_url": reboot_url,
-            "ptz_mode": ptz_mode,
-            "ptz_right_url": ptz_right_url,
-            "ptz_left_url": ptz_left_url,
-            "ptz_up_url": ptz_up_url,
-            "ptz_down_url": ptz_down_url,
-            "min_area_rect": min_area_rect,
-            "hog_scale": hog_scale,
-            "hog_thresh": hog_thresh,
-            "mog2_sensitivity": mog2_sensitivity,
-        }
-        camera_conf.append(cdata)
-    if not camera_conf:
-        return None
-    return camera_conf
-
-
-def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
+def run_cameras(pd_outqueue, pd_inqueue, dirs, mplock, cfg, mp_loggerqueue):
     global TERMINATED
 
     K.clear_session()
@@ -420,9 +370,10 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     signal.signal(signal.SIGINT, sh.sighandler_pd)
     signal.signal(signal.SIGTERM, sh.sighandler_pd)
 
+    db = G3DB(mplock, cfg, dirs, logger)
+    camera_config = db.get_cameras()
+    options = db.get_options()
     cameras = []
-    camera_config = get_camera_config(cfg)
-
     for c in camera_config:
         camera = Camera(c, dirs, mp_loggerqueue, logger)
         cameras.append(camera)
@@ -443,9 +394,9 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     else:
         pd_outqueue.put(("allok", None))
 
-    kreta = KerasRetinaNet(dirs, cfg, logger)
+    kreta = KerasRetinaNet(dirs, db, logger)
     try:
-        showframes = True if cfg["OPTIONS"]["SHOWFRAMES"].lower() == "yes" else False
+        showframes = options["showframes"]
     except Exception:
         logger.warning(whoami() + "showframes not set in config, setting to default False!")
         showframes = False

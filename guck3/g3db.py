@@ -14,8 +14,6 @@ class G3DB():
         self.lock = mplock
         self.dirs = dirs
         self.db_file_name = dirs["main"] + "guck3.db"
-        if os.path.isfile(self.db_file_name):
-            os.remove(self.db_file_name)
         self.db = SqliteDatabase(self.db_file_name)
 
         class BaseModel(Model):
@@ -26,8 +24,16 @@ class G3DB():
             username = CharField()
             password = CharField()
 
+        # for webflask status tracking
+        class USERDATA(BaseModel):
+            username = CharField()
+            active = BooleanField()
+            lasttm = FloatField()
+            no_newdetections = IntegerField()
+            photolist = PickleField()
+
         class OPTIONS(BaseModel):
-            debuglevel = CharField()
+            loglevel = CharField()
             showframes = BooleanField()
             retinanet_model = CharField()
             storephotos = BooleanField()
@@ -83,20 +89,102 @@ class G3DB():
         self.CAMERA = CAMERA
         self.OPTIONS = OPTIONS
         self.TELEGRAM = TELEGRAM
-        self.tablelist = [self.USER, self.CAMERA, self.OPTIONS, self.TELEGRAM]
+        self.USERDATA = USERDATA
+        self.tablelist = [self.USER, self.CAMERA, self.OPTIONS, self.TELEGRAM, self.USERDATA]
         self.db.connect()
         self.db.create_tables(self.tablelist)
         self.SQLITE_MAX_VARIABLE_NUMBER = int(max_sql_variables() / 4)
+        self.logger.debug(whoami() + "SQLITE_MAX_VARIABLE_NUMBER = " + str(self.SQLITE_MAX_VARIABLE_NUMBER))
 
+    def clear(self):
+        u = self.USER.delete()
+        u.execute()
+        c = self.CAMERA.delete()
+        c.execute()
+        o = self.OPTIONS.delete()
+        o.execute()
+        t = self.TELEGRAM.delete()
+        t.execute()
+
+    # ---- USERS ------
+    def get_users(self):
+        user_conf = {}
+        with self.lock:
+            for u in self.USER:
+                user_conf[u.username] = u.password
+        if user_conf == {}:
+            return None
+        return user_conf
+
+    # ---- USERDATA ------
+    def get_userdata(self):
+        userdata = {}
+        with self.lock:
+            for ud in self.USERDATA:
+                userdata[ud.username] = {}
+                userdata[ud.username]["active"] = ud.active
+                userdata[ud.username]["lasttm"] = ud.lasttm
+                userdata[ud.username]["no_newdetections"] = ud.no_newdetections
+                userdata[ud.username]["photolist"] = ud.photolist
+        if userdata == {}:
+            return None
+        return userdata
+
+    def insert_new_userdata(self, username, lasttm, active, no_newdetections, photolist):
+        with self.lock:
+            self.USERDATA.create(username=username, lasttm=lasttm, active=active, no_newdetections=no_newdetections,
+                                 photolist=photolist)
+
+    def update_userdata(self, username, lasttm, active, no_newdetections, photolist):
+        try:
+            with self.lock:
+                query = self.USERDATA.update(lasttm=lasttm, active=active, no_newdetections=no_newdetections,
+                                             photolist=photolist).where(self.USERDATA.username == username)
+                query.execute()
+                return 1
+        except Exception as e:
+            self.logger.warning(whoami() + str(e) + ": cannot update USERDATA")
+            return -1
+
+    # ---- CAMERA ------
+    def get_cameras(self):
+        camera_conf = []
+        with self.lock:
+            for c in self.CAMERA:
+                cdata = {
+                        "name": c.name,
+                        "active": c.active,
+                        "stream_url": c.stream_url,
+                        "photo_url": c.photo_url,
+                        "reboot_url": c.reboot_url,
+                        "ptz_mode": c.ptz_mode,
+                        "ptz_right_url": c.ptz_right_url,
+                        "ptz_left_url": c.ptz_left_url,
+                        "ptz_up_url": c.ptz_up_url,
+                        "ptz_down_url": c.ptz_down_url,
+                        "min_area_rect": c.min_area_rect,
+                        "hog_scale": c.hog_scale,
+                        "hog_thresh": c.hog_thresh,
+                        "mog2_sensitivity": c.mog2_sensitivity,
+                    }
+                camera_conf.append(cdata)
+        if not camera_conf:
+            return None
+        return camera_conf
+
+    # ---- OPTIONS ------
     def get_options(self):
-        o = self.OPTIONS.select()[0]
-        res = {"debuglevel": o.debuglevel, "showframes": o.showframes, "retinanet_model": o.retinanet_model,
+        with self.lock:
+            o = self.OPTIONS.select()[0]
+        res = {"loglevel": o.loglevel, "showframes": o.showframes, "retinanet_model": o.retinanet_model,
                "storephotos": o.storephotos, "addtl_photo_path": o.addtl_photo_path,
                "keyboard_active": o.keyboard_active}
         return res
 
+    # ---- TELEGRAM ------
     def get_telegram(self):
-        t = self.TELEGRAM.select()[0]
+        with self.lock:
+            t = self.TELEGRAM.select()[0]
         res = {"active": t.active, "token": t.token, "chatids": t.chatids}
         return res
 
@@ -159,9 +247,9 @@ class G3DB():
         except Exception:
             keyboard_active = False
         try:
-            debuglevel = self.cfg["OPTIONS"]["DEBUGLEVEL"].lower()
+            loglevel = self.cfg["OPTIONS"]["LOGLEVEL"].lower()
         except Exception:
-            debuglevel = "info"
+            loglevel = "info"
         try:
             showframes = True if self.cfg["OPTIONS"]["SHOWFRAMES"].lower() == "yes" else False
         except Exception:
@@ -185,12 +273,13 @@ class G3DB():
             addtl_photo_path = "None"
         try:
             with self.lock:
-                self.OPTIONS.create(debuglevel=debuglevel, showframes=showframes, retinanet_model=retinanet_model,
+                self.OPTIONS.create(loglevel=loglevel, showframes=showframes, retinanet_model=retinanet_model,
                                     storephotos=storephotos, addtl_photo_path=addtl_photo_path,
                                     keyboard_active=keyboard_active)
         except Exception:
             self.copyok = False
             return
+        self.logger.debug(whoami() + "options data copied to db")
         # TELEGRAM
         try:
             active = True if self.cfg["TELEGRAM"]["ACTIVE"].lower() == "yes" else False
@@ -212,25 +301,30 @@ class G3DB():
                 self.TELEGRAM.create(active=active, token=token, chatids=chatids)
         except Exception:
             self.copyok = False
+            return
+        self.logger.debug(whoami() + "telegram data copied to db")
 
     def copy_db_to_cfg(self):
         if not self.copyok:
             return
         # OPTIONS
-        options = self.OPTIONS.select()[0]
-        self.cfg["OPTIONS"]["DEBUGLEVEL"] = options.debuglevel
+        with self.lock:
+            options = self.OPTIONS.select()[0]
+        self.cfg["OPTIONS"]["LOGLEVEL"] = options.loglevel
         self.cfg["OPTIONS"]["SHOWFRAMES"] = "yes" if options.showframes else "no"
         self.cfg["OPTIONS"]["RETINANET_MODEL"] = options.retinanet_model
         self.cfg["OPTIONS"]["STOREPHOTOS"] = "yes" if options.storephotos else "no"
         self.cfg["OPTIONS"]["ADDTL_PHOTO_PATH"] = options.addtl_photo_path
         self.cfg["OPTIONS"]["KEYBOARD_ACTIVE"] = "yes" if options.keyboard_active else "no"
         # TELEGRAM
-        tgram = self.TELEGRAM.select()[0]
+        with self.lock:
+            tgram = self.TELEGRAM.select()[0]
         self.cfg["TELEGRAM"]["ACTIVE"] = "yes" if tgram.active else "no"
         self.cfg["TELEGRAM"]["TOKEN"] = tgram.token
         self.cfg["TELEGRAM"]["CHATIDS"] = "[" + ",".join([str(ci) for ci in tgram.chatids]) + "]"
         # CAMERAS
-        cameras = self.CAMERA.select()
+        with self.lock:
+            cameras = self.CAMERA.select()
         for i, c in enumerate(cameras, start=1):
             cstr = "CAMERA" + str(i)
             self.cfg[cstr]["ACTIVE"] = "yes" if c.active else "no"
@@ -248,7 +342,8 @@ class G3DB():
             self.cfg[cstr]["HOG_THRESH"] = str(c.hog_thresh)
             self.cfg[cstr]["MOG2_SENSITIVITY"] = str(c.mog2_sensitivity)
         # USER
-        users = self.USER.select()
+        with self.lock:
+            users = self.USER.select()
         for i, u in enumerate(users, start=1):
             ustr = "USER" + str(i)
             self.cfg[ustr]["USERNAME"] = u.username
@@ -267,4 +362,3 @@ class G3DB():
         self.db.execute_sql("VACUUM")
         self.db.drop_tables(self.tablelist)
         self.db.close()
-        os.remove(self.db_file_name)

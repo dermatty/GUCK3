@@ -2,7 +2,6 @@ import os
 import sensors
 import psutil
 import configparser
-import json
 from setproctitle import setproctitle
 import logging
 import logging.handlers
@@ -226,7 +225,7 @@ class TelegramThread:
         if not self.active:
             return -1
         self.logger.debug(whoami() + "starting telegram handler")
-        self.logger.debug(whoami() + str(self.token) + " / " + str(self.chatids))
+        self.logger.debug(whoami() + "telegram  token & chat ids: " + str(self.token) + " / " + str(self.chatids))
         try:
             self.updater = Updater(self.token, use_context=True)
             self.dp = self.updater.dispatcher
@@ -442,7 +441,7 @@ def run():
 
     # get log level
     try:
-        loglevel_str = cfg["OPTIONS"]["debuglevel"].lower()
+        loglevel_str = cfg["OPTIONS"]["LOGLEVEL"].lower()
         if loglevel_str == "info":
             loglevel = logging.INFO
         elif loglevel_str == "debug":
@@ -507,9 +506,12 @@ def run():
     state_data.PD_INQUEUE = mp.Queue()
     state_data.PD_OUTQUEUE = mp.Queue()
     state_data.MAINQUEUE = queue.Queue()
+    state_data.WF_INQUEUE = mp.Queue()
+    state_data.WF_OUTQUEUE = mp.Queue()
 
     # WebServer
-    state_data.mpp_webflask = mp.Process(target=webflask.main, args=(cfg, dirs, mp_loggerqueue, ))
+    state_data.mpp_webflask = mp.Process(target=webflask.main, args=(cfg, mplock, dirs, state_data.WF_OUTQUEUE,
+                                                                     state_data.WF_INQUEUE, mp_loggerqueue, ))
     state_data.mpp_webflask.start()
 
     # Telegram
@@ -563,7 +565,7 @@ def run():
             if mq_cmd == "start":
                 mpp_peopledetection = mp.Process(target=peopledetection.run_cameras,
                                                  args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, state_data.DIRS,
-                                                       cfg, mp_loggerqueue, ))
+                                                       mplock, cfg, mp_loggerqueue, ))
                 mpp_peopledetection.start()
                 state_data.mpp_peopledetection = mpp_peopledetection
                 state_data.PD_OUTQUEUE.put((mq_param + "_active", True))
@@ -607,11 +609,15 @@ def run():
     exitcode = 1
     if RESTART:
         exitcode = 3
+    # close all the other mps & stuff
+    sh.shutdown(exitcode)
+    # close db
     ret = db.copy_db_to_cfg()
     if ret == -1:
         exitcode = -1
+    db.clear()
     db.close()
-    sh.shutdown(exitcode)
+
     if sys.stdout != old_sys_stdout:
         sys.stdout = old_sys_stdout
     signal.signal(signal.SIGINT, old_sigint)
