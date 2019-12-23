@@ -11,15 +11,31 @@ from setproctitle import setproctitle
 from guck3.mplogging import whoami
 from guck3.g3db import G3DB
 import time
-from guck3 import models
+from guck3 import models, setup_dirs
 from threading import Thread
 import logging
-
+import redis
+import configparser
 
 DB = None
 USERS = None
 USERDATA = None
 DIRS = None
+
+# get redis data
+ret, dirs = setup_dirs()
+cfg_file = dirs["main"] + "guck3.config"
+cfg = configparser.ConfigParser()
+cfg.read(cfg_file)
+try:
+    REDIS_HOST = cfg["OPTIONS"]["REDIS_HOST"]
+except Exception:
+    REDIS_HOST = "127.0.0.1"
+try:
+    REDIS_PORT = int(cfg["OPTIONS"]["REDIS_PORT"])
+except Exception:
+    REDIS_PORT = 6379
+REDISCLIENT = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
 
 # -------------- Helper functions --------------
@@ -31,8 +47,9 @@ def number_of_workers():
 # -------------- Init Flask App --------------
 app = Flask(__name__)
 app.secret_key = "dfdsmdsv11nmDFSDfds"
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config["REDIS_URL"] = "redis://etec.iv.at"
+app.config["REDIS_URL"] = "redis://" + REDIS_HOST + ":" + str(REDIS_PORT)
+app.config['SESSION_TYPE'] = "redis"
+app.config["SESSION_REDIS"] = REDISCLIENT
 app.register_blueprint(sse, url_prefix='/stream')
 Session(app)
 
@@ -170,6 +187,7 @@ def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
     global USERS
     global USERDATA
     global DIRS
+    global app
 
     setproctitle("g3." + os.path.basename(__file__))
 

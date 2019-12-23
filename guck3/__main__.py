@@ -5,7 +5,7 @@ import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, webflask
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues
 from guck3.mplogging import whoami
 from guck3.g3db import G3DB
 import datetime
@@ -18,6 +18,7 @@ from telegram.ext import Updater, MessageHandler, Filters
 import subprocess
 from threading import Thread
 import cv2
+from guck3 import webflask
 
 
 TERMINATED = False
@@ -88,9 +89,9 @@ class SigHandler_g3:
 
     def shutdown(self, exit_status=1):
         trstr = self.get_trstr(exit_status)
-        if self.state_data.TG.running:
+        if self.state_data.TG and self.state_data.TG.running:
             self.state_data.TG.stop()
-        if self.state_data.KB.active:
+        if self.state_data.KB and self.state_data.KB.active:
             self.state_data.KB.stop()
             self.state_data.KB.join()
         mp_pd = self.state_data.mpp_peopledetection
@@ -106,7 +107,12 @@ class SigHandler_g3:
             if mp_wf.pid:
                 print(trstr + "joining flask webserver ...")
                 os.kill(mp_wf.pid, signal.SIGTERM)
-                mp_wf.join()
+                mp_wf.join(5)
+                if mp_wf.is_alive():
+                    trstr = self.get_trstr(exit_status)
+                    print(trstr + "webflask shutdown slow, sending SIGKILL!")
+                    os.kill(mp_wf.pid, signal.SIGKILL)
+                    mp_wf.join()
                 print(self.get_trstr(exit_status) + "flask webserver exited!")
         trstr = self.get_trstr(exit_status)
         if self.mp_loglistener:
@@ -470,21 +476,22 @@ def run():
     logger.debug(whoami() + "starting with loglevel '" + loglevel_str + "'")
     logger.info(whoami() + "Welcome to GUCK3 " + os.environ["GUCK3_VERSION"])
 
-    # init DB
-    mplock = mp.Lock()
-    db = G3DB(mplock, cfg, dirs, logger)
-    db.copy_cfg_to_db()    # read cfg file to DB
-    if not db.copyok:
-        logger.error(whoami() + ": cannot init DB, exiting")
-        db.close()
-        return -1
-
     # sighandler
     sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, state_data, old_sys_stdout, logger)
     old_sigint = signal.getsignal(signal.SIGINT)
     old_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGINT, sh.sighandler_g3)
     signal.signal(signal.SIGTERM, sh.sighandler_g3)
+
+    # init DB
+    mplock = mp.Lock()
+    db = G3DB(mplock, cfg, dirs, logger)
+    db.copy_cfg_to_db()    # read cfg file to DB
+    if not db.copyok:
+        logger.error(whoami() + ": cannot init DB, exiting")
+        sh.shutdown()
+        db.close()
+        return -1
 
     # save photos setup
     try:
@@ -510,6 +517,13 @@ def run():
     state_data.WF_OUTQUEUE = mp.Queue()
 
     # WebServer
+    try:
+        webflask.REDISCLIENT.ping()
+    except Exception:
+        logger.error(whoami() + "cannot start webserver due to redis server not available, exiting")
+        db.close()
+        sh.shutdown()
+        return -1
     state_data.mpp_webflask = mp.Process(target=webflask.main, args=(cfg, mplock, dirs, state_data.WF_OUTQUEUE,
                                                                      state_data.WF_INQUEUE, mp_loggerqueue, ))
     state_data.mpp_webflask.start()

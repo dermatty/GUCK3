@@ -39,6 +39,8 @@ class G3DB():
             storephotos = BooleanField()
             addtl_photo_path = CharField()
             keyboard_active = BooleanField()
+            redis_host = CharField()
+            redis_port = IntegerField()
 
         class TELEGRAM(BaseModel):
             active = BooleanField()
@@ -178,7 +180,7 @@ class G3DB():
             o = self.OPTIONS.select()[0]
         res = {"loglevel": o.loglevel, "showframes": o.showframes, "retinanet_model": o.retinanet_model,
                "storephotos": o.storephotos, "addtl_photo_path": o.addtl_photo_path,
-               "keyboard_active": o.keyboard_active}
+               "keyboard_active": o.keyboard_active, "redis_host": o.redis_host, "redis_port": o.redis_port}
         return res
 
     # ---- TELEGRAM ------
@@ -243,6 +245,14 @@ class G3DB():
         self.logger.debug(whoami() + "camera data copied to db")
         # OPTIONS
         try:
+            redis_host = self.cfg["OPTIONS"]["REDIS_HOST"]
+        except Exception:
+            redis_host = "127.0.0.1"
+        try:
+            redis_port = int(self.cfg["OPTIONS"]["REDIS_PORT"])
+        except Exception:
+            redis_port = 6379
+        try:
             keyboard_active = True if self.cfg["OPTIONS"]["KEYBOARD_ACTIVE"].lower() == "yes" else False
         except Exception:
             keyboard_active = False
@@ -275,7 +285,7 @@ class G3DB():
             with self.lock:
                 self.OPTIONS.create(loglevel=loglevel, showframes=showframes, retinanet_model=retinanet_model,
                                     storephotos=storephotos, addtl_photo_path=addtl_photo_path,
-                                    keyboard_active=keyboard_active)
+                                    keyboard_active=keyboard_active, redis_host=redis_host, redis_port=redis_port)
         except Exception:
             self.copyok = False
             return
@@ -316,6 +326,8 @@ class G3DB():
         self.cfg["OPTIONS"]["STOREPHOTOS"] = "yes" if options.storephotos else "no"
         self.cfg["OPTIONS"]["ADDTL_PHOTO_PATH"] = options.addtl_photo_path
         self.cfg["OPTIONS"]["KEYBOARD_ACTIVE"] = "yes" if options.keyboard_active else "no"
+        self.cfg["OPTIONS"]["REDIS_HOST"] = options.redis_host
+        self.cfg["OPTIONS"]["REDIS_PORT"] = str(options.redis_port)
         # TELEGRAM
         with self.lock:
             tgram = self.TELEGRAM.select()[0]
