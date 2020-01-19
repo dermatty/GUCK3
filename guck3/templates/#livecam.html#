@@ -18,7 +18,7 @@
               </a>
           </div>
           <div class="col-xs-2">
-              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=3) }}'">
+              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=3) }}'">web
                   <span class="glyphicon glyphicon-arrow-left"></span>
               </a>
           </div>

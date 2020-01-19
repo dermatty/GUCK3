@@ -19,6 +19,8 @@ import configparser
 import requests
 import cv2
 import numpy as np
+import threading
+from threading import get_ident
 
 DB = None
 USERS = None
@@ -168,69 +170,111 @@ def detections():
 
 # -------------- livecam --------------
 
-class Camera(object):
-    def __init__(self, camnr, interval=0):
-        self.interval = interval
-        cameralist = [cd["stream_url"] for cd in DB.get_cameras()]
-        self.surl = cameralist[camnr]
-        self.r = requests.get(self.surl, stream=True)
-        self.lasttime = time.time()
-        self.bytes = b''
+class CameraEvent(object):
+    def __init__(self):
+        self.events = {}
 
-    def restart(self):
-        self.r = requests.get(self.surl, stream=True)
+    def wait(self):
+        ident = get_ident()
+        if ident not in self.events:
+            self.events[ident] = [threading.Event(), time.time()]
+        return self.events[ident][0].wait()
+
+    def set(self):
+        now = time.time()
+        remove = None
+        for ident, event in self.events.items():
+            if not event[0].isSet():
+                event[0].set()
+                event[1] = now
+            else:
+                if now - event[1] > 5:
+                    remove = ident
+        if remove:
+            del self.events[remove]
+
+    def clear(self):
+        self.events[get_ident()][0].clear()
+
+
+class BaseCamera(object):
+    thread = None  # background thread that reads frames from camera
+    frame = None  # current frame is stored here by background thread
+    last_access = 0  # time of last client access to the camera
+    event = CameraEvent()
+
+    def __init__(self):
+        """Start the background camera thread if it isn't running yet."""
+        if BaseCamera.thread is None:
+            BaseCamera.last_access = time.time()
+            BaseCamera.thread = threading.Thread(target=self._thread)
+            BaseCamera.thread.start()
+            while self.get_frame() is None:
+                time.sleep(0.01)
 
     def get_frame(self):
+        BaseCamera.last_access = time.time()
+        BaseCamera.event.wait()
+        BaseCamera.event.clear()
+        return BaseCamera.frame
+
+    @staticmethod
+    def frames():
+        raise RuntimeError('Must be implemented by subclasses.')
+
+    @classmethod
+    def _thread(cls):
+        app.logger.info(whoami() + "starting camera thread")
+        frames_iterator = cls.frames()
+        for frame in frames_iterator:
+            BaseCamera.frame = frame
+            BaseCamera.event.set()  # send signal to clients
+            time.sleep(0)
+            if time.time() - BaseCamera.last_access > 10:
+                frames_iterator.close()
+                app.logger.info(whoami() + "stopping camera thread due to inactivity")
+                break
+        BaseCamera.thread = None
+
+
+class Camera(BaseCamera):
+    def __init__(self, camnr):
+        cameralist = [(cd["name"], cd["stream_url"]) for cd in DB.get_cameras()]
+        Camera.name, Camera.surl = cameralist[camnr]
+        app.logger.info(whoami() + "opening video stream on camera " + self.name)
+        super(Camera, self).__init__()
+
+    @staticmethod
+    def frames():
         try:
-            for chunk in self.r.iter_content(chunk_size=1024):
-                self.bytes += chunk
-                a = self.bytes.find(b'\xff\xd8')
-                b = self.bytes.find(b'\xff\xd9')
-                if a != -1 and b != -1:
-                    jpg = self.bytes[a:b+2]
-                    self.bytes = self.bytes[b+2:]
-                    if time.time() - self.lasttime >= self.interval:
-                        frame = cv2.imdecode(np.fromstring(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
-                        ret, jpeg = cv2.imencode('.jpg', frame)
-                        self.lasttime = time.time()
-                        return ret, jpeg.tobytes()
-                    else:
-                        return False, None
-        except Exception:
-            return False, None
+            camera = cv2.VideoCapture(Camera.surl)
+            while True:
+                _, img = camera.read()
+                yield cv2.imencode('.jpg', img)[1].tobytes()
+        except Exception as e:
+            app.logger.warning(whoami() + "cannot get frames from " + Camera.name + ": " + str(e))
 
 
 def gen(camera):
-    global frame0
     while True:
         try:
-            ret, frame = camera.get_frame()
-            time.sleep(0.05)
-            if ret and frame is not None:
+            frame = camera.get_frame()
+            if frame:
                 yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
         except Exception:
-            return
+            pass
 
 
-@app.route('/video_feed/<camnr>', defaults={"interval": 5})
-@app.route('/video_feed/<camnr>/<interval>')
-def video_feed(camnr, interval=5):
-    global gen0
-    try:
-        gen0.close()
-    except Exception:
-        pass
-    gen0 = gen(Camera(int(camnr)-1, int(interval)))
-    ret = Response(gen0, mimetype='multipart/x-mixed-replace; boundary=frame')
-    return ret
+@app.route('/video_feed/<camnr>')
+def video_feed(camnr):
+    return Response(gen(Camera(int(camnr)-1)), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
-@app.route("/livecam", defaults={"camnrstr": 0, "interval": 2, "ptz": 0}, methods=['GET', 'POST'])
-@app.route("/livecam/<camnrstr>", defaults={"interval": 2, "ptz": 0}, methods=['GET', 'POST'])
-@app.route("/livecam/<camnrstr>/<interval>", defaults={"ptz": 0}, methods=['GET', 'POST'])
-@app.route("/livecam/<camnrstr>/<interval>/<ptz>", methods=['GET', 'POST'])
+@app.route("/livecam", defaults={"camnrstr": 0, "ptz": 0}, methods=['GET', 'POST'])
+@app.route("/livecam/<camnrstr>", defaults={"ptz": 0}, methods=['GET', 'POST'])
+@app.route("/livecam/<camnrstr>/<ptz>", methods=['GET', 'POST'])
 @flask_login.login_required
-def livecam(camnrstr=0, interval=2, ptz=0):
+def livecam(camnrstr=0, ptz=0):
     if request.method == "GET":
         ptz0 = int(ptz)
         camnr = int(camnrstr)
@@ -254,7 +298,7 @@ def livecam(camnrstr=0, interval=2, ptz=0):
                     requests.get(ptzcommand)
                 except Exception:
                     pass
-        return render_template("livecam.html", cameralist=cameralist, camnr=camnr+1, speed=int(interval), ptz=0)
+        return render_template("livecam.html", cameralist=cameralist, camnr=camnr+1, ptz=0)
     elif request.method == "POST":
         pass
 
