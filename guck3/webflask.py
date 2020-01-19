@@ -2,7 +2,7 @@ from __future__ import unicode_literals
 import multiprocessing
 import gunicorn.app.base
 import os
-from flask import Flask, render_template, make_response, request, g, redirect, url_for, session
+from flask import Flask, render_template, make_response, request, g, redirect, url_for, session, Response
 from flask.logging import default_handler
 from flask_sse import sse
 from flask_session import Session
@@ -16,6 +16,9 @@ from threading import Thread
 import logging
 import redis
 import configparser
+import requests
+import cv2
+import numpy as np
 
 DB = None
 USERS = None
@@ -161,6 +164,99 @@ def index():
 @flask_login.login_required
 def detections():
     return render_template('index.html')
+
+
+# -------------- livecam --------------
+
+class Camera(object):
+    def __init__(self, camnr, interval=0):
+        self.interval = interval
+        cameralist = [cd["stream_url"] for cd in DB.get_cameras()]
+        self.surl = cameralist[camnr]
+        self.r = requests.get(self.surl, stream=True)
+        self.lasttime = time.time()
+        self.bytes = b''
+
+    def restart(self):
+        self.r = requests.get(self.surl, stream=True)
+
+    def get_frame(self):
+        try:
+            for chunk in self.r.iter_content(chunk_size=1024):
+                self.bytes += chunk
+                a = self.bytes.find(b'\xff\xd8')
+                b = self.bytes.find(b'\xff\xd9')
+                if a != -1 and b != -1:
+                    jpg = self.bytes[a:b+2]
+                    self.bytes = self.bytes[b+2:]
+                    if time.time() - self.lasttime >= self.interval:
+                        frame = cv2.imdecode(np.fromstring(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        ret, jpeg = cv2.imencode('.jpg', frame)
+                        self.lasttime = time.time()
+                        return ret, jpeg.tobytes()
+                    else:
+                        return False, None
+        except Exception:
+            return False, None
+
+
+def gen(camera):
+    global frame0
+    while True:
+        try:
+            ret, frame = camera.get_frame()
+            time.sleep(0.05)
+            if ret and frame is not None:
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        except Exception:
+            return
+
+
+@app.route('/video_feed/<camnr>', defaults={"interval": 5})
+@app.route('/video_feed/<camnr>/<interval>')
+def video_feed(camnr, interval=5):
+    global gen0
+    try:
+        gen0.close()
+    except Exception:
+        pass
+    gen0 = gen(Camera(int(camnr)-1, int(interval)))
+    ret = Response(gen0, mimetype='multipart/x-mixed-replace; boundary=frame')
+    return ret
+
+
+@app.route("/livecam", defaults={"camnrstr": 0, "interval": 2, "ptz": 0}, methods=['GET', 'POST'])
+@app.route("/livecam/<camnrstr>", defaults={"interval": 2, "ptz": 0}, methods=['GET', 'POST'])
+@app.route("/livecam/<camnrstr>/<interval>", defaults={"ptz": 0}, methods=['GET', 'POST'])
+@app.route("/livecam/<camnrstr>/<interval>/<ptz>", methods=['GET', 'POST'])
+@flask_login.login_required
+def livecam(camnrstr=0, interval=2, ptz=0):
+    if request.method == "GET":
+        ptz0 = int(ptz)
+        camnr = int(camnrstr)
+        cameradata = DB.get_cameras()
+        cameralist = [(cd["name"], cd["photo_url"], cd["stream_url"]) for cd in cameradata]
+        if ptz0 != 0 and len(cameralist)-1 >= camnr:
+            ptzlist = [(cd["ptz_up_url"], cd["ptz_down_url"], cd["ptz_left_url"], cd["ptz_right_url"])
+                       for cd in cameradata]
+            ptz_up, ptz_down, ptz_left, ptz_right = ptzlist[camnr]
+            ptzcommand = ""
+            if ptz0 == 1:
+                ptzcommand = ptz_up
+            elif ptz0 == 2:
+                ptzcommand = ptz_down
+            elif ptz0 == 3:
+                ptzcommand = ptz_left
+            elif ptz0 == 4:
+                ptzcommand = ptz_right
+            if ptzcommand != "":
+                try:
+                    requests.get(ptzcommand)
+                except Exception:
+                    pass
+        return render_template("livecam.html", cameralist=cameralist, camnr=camnr+1, speed=int(interval), ptz=0)
+    elif request.method == "POST":
+        pass
 
 
 # -------------- StandaloneApplication/main --------------

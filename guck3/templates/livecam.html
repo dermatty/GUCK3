@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block repstr %}
+{# <script type=text/javascript>
+ $SCRIPT_ROOT = {{ request.script_root|tojson|safe }};
+ $(function(){
+     var a = parseInt({{ speed*1000  }})
+     setInterval(function () {
+         var d = Math.random();
+         $("#iframe1").attr("src", "{{ camurl }}#e" + d);
+     }, a);
+     setInterval(refreshIframe,a);
+     function refreshIframe() {
+         $("#iframe0").attr("src", function(i, val) { return val; });
+     };
+ });
+</script> #}
+
+<div class="panel panel-default">
+   <div class="container" style="text-align:center;">
+       <img id="iframe2" class="img-responsive" src="{{ url_for('video_feed', camnr=camnr, interval=speed) }}">
+   </div> {# container #}
+   <div class="panel-body">
+      <div class="row" >
+          <div class="col-xs-4">
+              <div class="dropdown">
+              <button class="btn btn-primary dropdown-toggle" type="button" data-toggle="dropdown">
+              {% if speed > 0 %}
+              Interval: {{ speed }}
+              {% else %}
+              Streaming
+              {% endif %}
+              <span class="caret"></span>
+              </button>
+              <ul class="dropdown-menu">
+              <li><a href="{{ url_for('livecam', camnrstr=camnr-1, interval=0) }}">0 (stream)</a></li>
+              <li><a href="{{ url_for('livecam', camnrstr=camnr-1, interval=1) }}">1 sec</a></li>
+              <li><a href="{{ url_for('livecam', camnrstr=camnr-1, interval=2) }}">2 sec</a></li>
+              <li><a href="{{ url_for('livecam', camnrstr=camnr-1, interval=5) }}">5 sec</a></li>
+              <li><a href="{{ url_for('livecam', camnrstr=camnr-1, interval=15) }}">15 sec</a></li>
+              </ul>
+              </div> {# dropdown #} 
+          </div> {# col #}
+          <div class="col-xs-2">
+              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, interval=speed, ptz=1) }}'">
+                  <span class="glyphicon glyphicon-arrow-up"></span>
+              </a>
+          </div>
+          <div class="col-xs-2"> 
+              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, interval=speed, ptz=2) }}'">
+                  <span class="glyphicon glyphicon-arrow-down"></span>
+              </a>
+          </div>
+          <div class="col-xs-2">
+              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, interval=speed, ptz=3) }}'">
+                  <span class="glyphicon glyphicon-arrow-left"></span>
+              </a>
+          </div>
+          <div class="col-xs-2">
+              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, interval=speed, ptz=4) }}'">
+                  <span class="glyphicon glyphicon-arrow-right"></span>
+              </a>
+          </div>
+      </div> {# row #}
+      <br>
+      <table id="camurltable" class="table table-hover">
+          <thead>
+              <tr>
+                  <th class="text-center">Camera</th>
+                  <th class="text-center">Name</th>
+                  <th class="text-center">Choose</th>
+                  {# <th class="text-center">URL</th> #}
+              </tr>
+          </thead>
+          <tbody id="camurltablebody">
+              <form>
+                  {% for camname, camurl, vurl in cameralist %}
+                  <tr id="gaga"> 
+                      <td class="text-center">{{ loop.index }}</td> 
+                      <td class="text-center">{{ camname }}</td>
+                      <td class="text-center">
+                          <div class="radio">
+                              <label><input id="camchangebu{{ loop.index }}" type="radio" name="optradio"{% if camnr == loop.index %}checked="checked"{% endif %} onclick="location.href='{{ url_for('livecam', camnrstr=loop.index-1, interval=speed) }}'"></label>
+                          </div>
+                      </td>
+                      {# <td class="text-center">{{ camurl }}</td> #}
+                  </tr>
+                  {% endfor %}
+              </form>
+          </tbody>
+      </table>
+  </div> {# panel body #}
+
+  <br><br>
+</div> {# panel #}
+{% endblock %}
+    
