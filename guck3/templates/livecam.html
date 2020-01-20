@@ -1,34 +1,45 @@
 {% extends "base.html" %}
 
 {% block repstr %}
+
+<style>
+.marginauto {
+    margin: 10px auto 20px;
+    display: block;
+}
+</style>
+
 <div class="panel panel-default">
-   <div class="container" style="text-align:center;">
-       <img id="iframe2" class="img-responsive" src="{{ url_for('video_feed', camnr=camnr) }}">
-   </div> {# container #}
-   <div class="panel-body">
-      <div class="row" >
-          <div class="col-xs-2">
-              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=1) }}'">
+   <br>
+   <div class="container-fluid">
+      <div class="row">
+          <div class="col-sm-3" style="text-align: center;">
+              <a href="#" class="btn btn-success btn-md" style="float: none;" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=1) }}'">
                   <span class="glyphicon glyphicon-arrow-up"></span>
               </a>
           </div>
-          <div class="col-xs-2"> 
-              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=2) }}'">
-                  <span class="glyphicon glyphicon-arrow-down"></span>
+          <div class="col-sm-3" style="text-align: center;"> 
+              <a href="#" class="btn btn-success btn-md" style="float: none;" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=2) }}'">
+                 <span class="glyphicon glyphicon-arrow-down"></span>
               </a>
           </div>
-          <div class="col-xs-2">
-              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=3) }}'">web
+          <div class="col-sm-3" style="text-align: center;">
+              <a href="#" class="btn btn-success btn-md" style="float: none;" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=3) }}'">
                   <span class="glyphicon glyphicon-arrow-left"></span>
               </a>
           </div>
-          <div class="col-xs-2">
-              <a href="#" class="btn btn-success btn-md" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=4) }}'">
+          <div class="col-sm-3" style="text-align: center;">
+              <a href="#" class="btn btn-success btn-md" style="float: none;" onclick="location.href='{{ url_for('livecam', camnrstr=camnr-1, ptz=4) }}'">
                   <span class="glyphicon glyphicon-arrow-right"></span>
               </a>
           </div>
       </div> {# row #}
-      <br>
+   </div> {# container #} 
+   <br>
+   <div class="container" style="text-align:center;">
+      <img class="marginauto" src="{{ url_for('video_feed', camnr=camnr) }}">
+   </div>
+   <div class="panel-body">
       <table id="camurltable" class="table table-hover">
           <thead>
               <tr>

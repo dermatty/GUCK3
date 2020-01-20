@@ -170,6 +170,9 @@ def detections():
 
 # -------------- livecam --------------
 
+# all this is copy-paste from :
+#    https://github.com/miguelgrinberg/flask-video-streaming
+
 class CameraEvent(object):
     def __init__(self):
         self.events = {}
