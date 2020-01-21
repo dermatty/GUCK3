@@ -535,6 +535,15 @@ def run():
 
     while not TERMINATED:
         time.sleep(0.02)
+        # get from webflask queue
+        try:
+            wf_cmd, wf_data = state_data.WF_INQUEUE.get_nowait()
+            if wf_cmd == "get_pd_status":
+                state_data.WF_OUTQUEUE.put((state_data.PD_ACTIVE, None))
+        except (queue.Empty, EOFError):
+            pass
+        except Exception:
+            pass
 
         # get el from peopledetection queue (clear it always!!)
         pdmsglist = []

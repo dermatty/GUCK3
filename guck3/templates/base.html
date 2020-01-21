@@ -22,36 +22,36 @@
          $SCRIPT_ROOT = {{ request.script_root|tojson|safe }};
          $(function() {
              var source = new EventSource("{{ url_for('sse.stream') }}");
-             var eventtype_nr = "nrdet_" + {% if current_user.is_authenticated %} "{{ current_user.get_id() }}" {% endif %}
-             var eventtype_title = "title_" + {% if current_user.is_authenticated %} "{{ current_user.get_id() }}" {% endif %}
-             var eventtype_idle = "idle_" + {% if current_user.is_authenticated %} "{{ current_user.get_id() }}" {% endif %}
-             var eventtype_guck = "guck"
-             var eventtype_paused = "paused"
+              //var eventtype_nr = "nrdet_" + {% if current_user.is_authenticated %} "{{ current_user.get_id() }}" {% endif %}
+             // var eventtype_title = "title_" + {% if current_user.is_authenticated %} "{{ current_user.get_id() }}" {% endif %}
+             // var eventtype_idle = "idle_" + {% if current_user.is_authenticated %} "{{ current_user.get_id() }}" {% endif %}
+             // var eventtype_guck = "guck"
+             // var eventtype_paused = "paused"
              // listener for showing nr_detections
-             source.addEventListener(eventtype_nr, function(event) {
+             source.addEventListener("nrdet0", function(event) {
                  var data = JSON.parse(event.data);
                  $.playSound("/static/dackel.mp3")
                  $("#nralarms").html(data.message);
              }, false);
              // listener for showing nr_detections
-             source.addEventListener(eventtype_idle, function(event) {
+             source.addEventListener("idle0", function(event) {
                  var data = JSON.parse(event.data);
                  $("#nralarms").html(data.message);
              }, false);
              // listener for paused
-             source.addEventListener(eventtype_paused, function(event) {
+             source.addEventListener("paused0", function(event) {
                  var data = JSON.parse(event.data);
                  $("#nralarms").html(data.message);
                  document.title = "GUCK 3 ...";
              }, false);
              // listener for showing red
-             source.addEventListener(eventtype_guck, function(event) {
+             source.addEventListener("guck0", function(event) {
                  var data = JSON.parse(event.data);
                  $("#nralarms").html(data.message);
                  document.title = "GUCK 3";
              }, false);
              // listener for nr_detections in title_bar
-             source.addEventListener(eventtype_title, function(event) {
+             source.addEventListener("title0", function(event) {
                  var data = JSON.parse(event.data);
                  var nr = data.message;
                  if (Number(nr) > 0) {

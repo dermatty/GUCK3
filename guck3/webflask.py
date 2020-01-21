@@ -13,7 +13,7 @@ from guck3.g3db import G3DB
 from guck3.camera import gen, Camera
 import time
 from guck3 import models, setup_dirs
-from threading import Thread
+from threading import Thread, Lock
 import logging
 import redis
 import configparser
@@ -48,7 +48,7 @@ def number_of_workers():
 
 # -------------- Init Flask App --------------
 app = Flask(__name__)
-app.secret_key = "dfdsmdsv11nmDFSDfds"
+app.secret_key = "dfdsmdsv11nmDFSDfds_ers"
 app.config["REDIS_URL"] = "redis://" + REDIS_HOST + ":" + str(REDIS_PORT)
 app.config['SESSION_TYPE'] = "redis"
 app.config["SESSION_REDIS"] = REDISCLIENT
@@ -59,15 +59,48 @@ Session(app)
 # -------------- MainCommunicator --------------
 class MainCommunicator(Thread):
 
-    def __init__(self, inqueue, outqueue):
+    def __init__(self, inqueue, outqueue, app):
         Thread.__init__(self)
         self.daemon = True
         self.inqueue = inqueue
         self.outqueue = outqueue
+        self.lock = Lock()
+        self.app = app
 
     def run(self):
+        pd_active = "N/A"
+        #with self.app.app_context():
+        #    result0 = render_template("guckphoto.html", nralarms=0, guckstatus="off", dackel="nobark")
+        #    type0 = "nrdet"
+        #    sse.publish({"message": result0}, type=type0)
+        #    type0 = "title"
+        #    sse.publish({"message": str(0)}, type=type0)
         while True:
-            time.sleep(1)
+            try:
+                with self.lock:
+                    self.outqueue.put(("get_pd_status", None))
+                    cmd, data = self.inqueue.get()
+            except Exception:
+                pass
+            if cmd != pd_active:
+                pd_active = cmd
+                if pd_active:
+                    with self.app.app_context():
+                        print("-------------------> setting to on")
+                        result0 = render_template("guckphoto.html", nralarms=0, guckstatus="on", dackel="bark")
+                        type0 = "nrdet0"
+                        sse.publish({"message": result0}, type=type0)
+                        type0 = "title0"
+                        sse.publish({"message": str(0)}, type=type0)
+                else:
+                    with self.app.app_context():
+                        print("-------------------> setting to off")
+                        result0 = render_template("guckphoto.html", nralarms=0, guckstatus="off", dackel="nobark")
+                        type0 = "nrdet0"
+                        sse.publish({"message": result0}, type=type0)
+                        type0 = "title0"
+                        sse.publish({"message": str(0)}, type=type0)
+            time.sleep(0.5)
 
 
 # -------------- Login Manager --------------
@@ -251,7 +284,7 @@ def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
     USERDATA = DB.get_userdata()
 
     # start communicator thread
-    maincomm = MainCommunicator(inqueue, outqueue)
+    maincomm = MainCommunicator(inqueue, outqueue, app)
     maincomm.start()
 
     options = {

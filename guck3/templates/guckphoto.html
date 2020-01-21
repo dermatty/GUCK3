@@ -1,0 +1,12 @@
+{% if guckstatus == "on" %}
+<span class="badge" style="background: green;">{{ nralarms }}</span>
+{% endif %}
+{% if guckstatus == "off" %}
+<span class="badge" style="background: red;">off</span>
+{% endif %}
+{% if dackel == "barki" %}
+<audio controls autoplay hidden>
+    <source src="/static/dackel.mp3" type="audio/mp3">
+    unsupported !! 
+</audio>
+{% endif %}
