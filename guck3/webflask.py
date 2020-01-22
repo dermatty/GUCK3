@@ -21,8 +21,8 @@ import requests
 
 DB = None
 USERS = None
-USERDATA = None
 DIRS = None
+maincomm = None
 
 # get redis data
 ret, dirs = setup_dirs()
@@ -59,22 +59,36 @@ Session(app)
 # -------------- MainCommunicator --------------
 class MainCommunicator(Thread):
 
-    def __init__(self, inqueue, outqueue, app):
+    def __init__(self, inqueue, outqueue, app, db):
         Thread.__init__(self)
         self.daemon = True
         self.inqueue = inqueue
         self.outqueue = outqueue
         self.lock = Lock()
         self.app = app
+        self.db = db
+        self.userdata_updated = False
+
+    def sse_publish(self):
+        if self.pd_active:
+            with self.app.app_context():
+                result0 = render_template("guckphoto.html", nralarms=0, guckstatus="on", dackel="bark")
+                type0 = "nrdet0"
+                sse.publish({"message": result0}, type=type0)
+                type0 = "title0"
+                sse.publish({"message": str(0)}, type=type0)
+        else:
+            with self.app.app_context():
+                result0 = render_template("guckphoto.html", nralarms=0, guckstatus="off", dackel="nobark")
+                type0 = "nrdet0"
+                sse.publish({"message": result0}, type=type0)
+                type0 = "title0"
+                sse.publish({"message": str(0)}, type=type0)
+        self.last_sse_published = time.time()
 
     def run(self):
-        pd_active = "N/A"
-        #with self.app.app_context():
-        #    result0 = render_template("guckphoto.html", nralarms=0, guckstatus="off", dackel="nobark")
-        #    type0 = "nrdet"
-        #    sse.publish({"message": result0}, type=type0)
-        #    type0 = "title"
-        #    sse.publish({"message": str(0)}, type=type0)
+        self.pd_active = "N/A"
+        self.last_sse_published = 0
         while True:
             try:
                 with self.lock:
@@ -82,24 +96,9 @@ class MainCommunicator(Thread):
                     cmd, data = self.inqueue.get()
             except Exception:
                 pass
-            if cmd != pd_active:
-                pd_active = cmd
-                if pd_active:
-                    with self.app.app_context():
-                        print("-------------------> setting to on")
-                        result0 = render_template("guckphoto.html", nralarms=0, guckstatus="on", dackel="bark")
-                        type0 = "nrdet0"
-                        sse.publish({"message": result0}, type=type0)
-                        type0 = "title0"
-                        sse.publish({"message": str(0)}, type=type0)
-                else:
-                    with self.app.app_context():
-                        print("-------------------> setting to off")
-                        result0 = render_template("guckphoto.html", nralarms=0, guckstatus="off", dackel="nobark")
-                        type0 = "nrdet0"
-                        sse.publish({"message": result0}, type=type0)
-                        type0 = "title0"
-                        sse.publish({"message": str(0)}, type=type0)
+            if cmd != self.pd_active or self.db.userdata_updated_since(self.last_sse_published):
+                self.pd_active = cmd
+                self.sse_publish()
             time.sleep(0.5)
 
 
@@ -116,12 +115,14 @@ def beforerequest():
         user0 = flask_login.current_user.get_id()
         g.user = user0
         if user0 is not None:
-            USERDATA = DB.get_userdata()
-            if not USERDATA or user0 not in USERDATA:
+            userdata = DB.get_userdata()
+            if userdata:
+                user_in_userdata = (len([1 for key in userdata if key == user0]) > 0)
+            if not userdata or not user_in_userdata:
                 DB.insert_new_userdata(user0, time.time(), True, 0, [])
             else:
-                DB.update_userdata(user0, time.time(), True, USERDATA[user0]["no_newdetections"],
-                                   USERDATA[user0]["photolist"])
+                DB.update_userdata(user0, time.time(), True, userdata[user0]["no_newdetections"],
+                                   userdata[user0]["photolist"])
     except Exception as e:
         app.logger.info(whoami() + str(e))
         pass
@@ -138,8 +139,8 @@ def user_loader(email):
     try:
         user = User()
         user.id = email
-    except Exception:
-        pass
+    except Exception as e:
+        app.logger.warning(whoami() + str(e))
     return user
 
 
@@ -260,9 +261,9 @@ class StandaloneApplication(gunicorn.app.base.BaseApplication):
 def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
     global DB
     global USERS
-    global USERDATA
     global DIRS
     global app
+    global maincomm
 
     setproctitle("g3." + os.path.basename(__file__))
 
@@ -281,10 +282,9 @@ def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
 
     # Password
     USERS = DB.get_users()
-    USERDATA = DB.get_userdata()
 
     # start communicator thread
-    maincomm = MainCommunicator(inqueue, outqueue, app)
+    maincomm = MainCommunicator(inqueue, outqueue, app, db)
     maincomm.start()
 
     options = {

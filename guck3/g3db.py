@@ -132,6 +132,15 @@ class G3DB():
             return None
         return userdata
 
+    def userdata_updated_since(self, lasttm_sse):
+        try:
+            entries = self.USERDATA.select().where(self.USERDATA.lasttm > lasttm_sse)
+            if entries:
+                return True
+        except Exception:
+            pass
+        return False
+
     def insert_new_userdata(self, username, lasttm, active, no_newdetections, photolist):
         with self.lock:
             self.USERDATA.create(username=username, lasttm=lasttm, active=active, no_newdetections=no_newdetections,
