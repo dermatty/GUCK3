@@ -1,5 +1,6 @@
 from peewee import Model, SqliteDatabase, CharField, BooleanField, IntegerField, FloatField
 from playhouse.fields import PickleField
+from playhouse.sqlite_ext import CSqliteExtDatabase
 from guck3.mplogging import whoami
 import json
 import os
@@ -14,6 +15,8 @@ class G3DB():
         self.lock = mplock
         self.dirs = dirs
         self.db_file_name = dirs["main"] + "guck3.db"
+        # self.db = CSqliteExtDatabase(":memory:")
+        # self.db_file = CSqliteExtDatabase(self.db_file_name)
         self.db = SqliteDatabase(self.db_file_name)
 
         class BaseModel(Model):
@@ -381,5 +384,7 @@ class G3DB():
 
     def close(self):
         self.db.execute_sql("VACUUM")
+        self.db.backup(self.db_file)
         self.db.drop_tables(self.tablelist)
         self.db.close()
+        self.db_file.close()
