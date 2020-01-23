@@ -2,7 +2,7 @@ import os
 import queue
 from setproctitle import setproctitle
 from guck3.mplogging import whoami
-from guck3 import mplogging, mpcam, clear_all_queues
+from guck3 import mplogging, mpcam, clear_all_queues, ConfigReader
 import time
 import cv2
 import multiprocessing as mp
@@ -15,7 +15,6 @@ import sys
 import logging
 from datetime import datetime
 from threading import Thread, Lock
-from guck3.g3db import G3DB
 
 # todo:
 #    each camera own thread which gets data from camera and does peopledetection
@@ -38,12 +37,12 @@ class SigHandler_pd:
 
 
 class KerasRetinaNet:
-    def __init__(self, dirs, db, logger):
+    def __init__(self, dirs, cfgr, logger):
         self.logger = logger
         self.active = False
-        self.db = db
+        self.cfgr = cfgr
         self.dirs = dirs
-        self.RETINA_PATH = self.dirs["main"] + self.db.get_options()["retinanet_model"]
+        self.RETINA_PATH = self.dirs["main"] + self.cfgr.get_options()["retinanet_model"]
         old_sys_stdout = sys.stdout
         f = open('/dev/null', 'w')
         sys.stdout = f
@@ -353,7 +352,7 @@ def stop_all_recordings(cameras):
         c.stop_recording()
 
 
-def run_cameras(pd_outqueue, pd_inqueue, dirs, mplock, cfg, mp_loggerqueue):
+def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     global TERMINATED
 
     K.clear_session()
@@ -370,9 +369,9 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, mplock, cfg, mp_loggerqueue):
     signal.signal(signal.SIGINT, sh.sighandler_pd)
     signal.signal(signal.SIGTERM, sh.sighandler_pd)
 
-    db = G3DB(mplock, cfg, dirs, logger)
-    camera_config = db.get_cameras()
-    options = db.get_options()
+    cfgr = ConfigReader(cfg)
+    camera_config = cfgr.get_cameras()
+    options = cfgr.get_options()
     cameras = []
     for c in camera_config:
         camera = Camera(c, dirs, mp_loggerqueue, logger)
@@ -394,9 +393,9 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, mplock, cfg, mp_loggerqueue):
     else:
         pd_outqueue.put(("allok", None))
 
-    kreta = KerasRetinaNet(dirs, db, logger)
+    kreta = KerasRetinaNet(dirs, cfgr, logger)
     try:
-        showframes = options["showframes"]
+        showframes = (options["showframes"].lower() == "yes")
     except Exception:
         logger.warning(whoami() + "showframes not set in config, setting to default False!")
         showframes = False

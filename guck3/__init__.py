@@ -5,6 +5,63 @@ import shutil
 import queue
 
 
+class ConfigReader:
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def get_cameras(self):
+        camera_conf = []
+        # CAMERA
+        idx = 1
+        while True:
+            str0 = "CAMERA" + str(idx)
+            try:
+                assert self.cfg[str0]["NAME"]
+                active = True if self.cfg[str0]["ACTIVE"].lower() == "yes" else False
+                camera_name = self.cfg[str0]["NAME"]
+                stream_url = self.cfg[str0]["STREAM_URL"]
+                photo_url = self.cfg[str0]["PHOTO_URL"]
+                reboot_url = self.cfg[str0]["REBOOT_URL"]
+                ptz_mode = self.cfg[str0]["PTZ_MODE"].lower()
+                if ptz_mode not in ["start", "startstop", "none"]:
+                    ptz_mode = "none"
+                ptz_right_url = self.cfg[str0]["PTZ_RIGHT_URL"]
+                ptz_left_url = self.cfg[str0]["PTZ_LEFT_URL"]
+                ptz_up_url = self.cfg[str0]["PTZ_UP_URL"]
+                ptz_down_url = self.cfg[str0]["PTZ_DOWN_URL"]
+                min_area_rect = int(self.cfg[str0]["MIN_AREA_RECT"])
+                hog_scale = float(self.cfg[str0]["HOG_SCALE"])
+                hog_thresh = float(self.cfg[str0]["HOG_THRESH"])
+                mog2_sensitivity = float(self.cfg[str0]["MOG2_SENSITIVITY"])
+                cdata = {
+                        "name": camera_name,
+                        "active": active,
+                        "stream_url": stream_url,
+                        "photo_url": photo_url,
+                        "reboot_url": reboot_url,
+                        "ptz_mode": ptz_mode,
+                        "ptz_right_url": ptz_right_url,
+                        "ptz_left_url": ptz_left_url,
+                        "ptz_up_url": ptz_up_url,
+                        "ptz_down_url": ptz_down_url,
+                        "min_area_rect": min_area_rect,
+                        "hog_scale": hog_scale,
+                        "hog_thresh": hog_thresh,
+                        "mog2_sensitivity": mog2_sensitivity,
+                    }
+                camera_conf.append(cdata)
+            except Exception:
+                break
+            idx += 1
+        return camera_conf
+
+    def get_options(self):
+        return self.cfg["OPTIONS"]
+
+    def get_telegram(self):
+        return self.cfg["TELEGRAM"]
+
+
 # setup folders
 def setup_dirs():
     install_dir = os.path.dirname(os.path.realpath(__file__))

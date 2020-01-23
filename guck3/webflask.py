@@ -18,6 +18,8 @@ import logging
 import redis
 import configparser
 import requests
+import signal
+
 
 DB = None
 USERS = None
@@ -44,6 +46,15 @@ REDISCLIENT = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
 def number_of_workers():
     return (multiprocessing.cpu_count() * 2) + 1
+
+
+def sighandler(a, b):
+    try:
+        DB.copy_db_to_cfg()
+        DB.clear()
+        DB.close()
+    except Exception:
+        pass
 
 
 # -------------- Init Flask App --------------
@@ -241,6 +252,7 @@ def livecam(camnrstr=0, ptz=0):
 
 # -------------- StandaloneApplication/main --------------
 
+
 class StandaloneApplication(gunicorn.app.base.BaseApplication):
 
     def __init__(self, app, options=None):
@@ -258,7 +270,7 @@ class StandaloneApplication(gunicorn.app.base.BaseApplication):
         return self.application
 
 
-def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
+def main(cfg, dirs, inqueue, outqueue, loggerqueue):
     global DB
     global USERS
     global DIRS
@@ -277,14 +289,21 @@ def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
 
     app.logger.info(whoami() + "starting ...")
 
-    db = G3DB(mplock, cfg, dirs, app.logger)
-    DB = db
+    tlock = Lock()
+    DB = G3DB(tlock, cfg, dirs, app.logger)
+    DB.copy_cfg_to_db()    # read cfg file to DB
+    if not DB.copyok:
+        app.logger.error(whoami() + ": cannot init DB, exiting")
+        DB.close()
+        outqueue.put("False")
+    else:
+        outqueue.put("True")
 
     # Password
     USERS = DB.get_users()
 
     # start communicator thread
-    maincomm = MainCommunicator(inqueue, outqueue, app, db)
+    maincomm = MainCommunicator(inqueue, outqueue, app, DB)
     maincomm.start()
 
     options = {
@@ -293,6 +312,7 @@ def main(cfg, mplock, dirs, inqueue, outqueue, loggerqueue):
         'debug': True,
         'workers': number_of_workers(),
     }
+    signal.signal(signal.SIGFPE, sighandler)     # nicht die feine englische / faut de mieux
     StandaloneApplication(app, options).run()
 
 

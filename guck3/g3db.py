@@ -340,12 +340,14 @@ class G3DB():
         self.cfg["OPTIONS"]["KEYBOARD_ACTIVE"] = "yes" if options.keyboard_active else "no"
         self.cfg["OPTIONS"]["REDIS_HOST"] = options.redis_host
         self.cfg["OPTIONS"]["REDIS_PORT"] = str(options.redis_port)
+        self.logger.debug(whoami() + "options copied to DB")
         # TELEGRAM
         with self.lock:
             tgram = self.TELEGRAM.select()[0]
         self.cfg["TELEGRAM"]["ACTIVE"] = "yes" if tgram.active else "no"
         self.cfg["TELEGRAM"]["TOKEN"] = tgram.token
         self.cfg["TELEGRAM"]["CHATIDS"] = "[" + ",".join([str(ci) for ci in tgram.chatids]) + "]"
+        self.logger.debug(whoami() + "telegram data copied to DB")
         # CAMERAS
         with self.lock:
             cameras = self.CAMERA.select()
@@ -365,6 +367,7 @@ class G3DB():
             self.cfg[cstr]["HOG_SCALE"] = str(c.hog_scale)
             self.cfg[cstr]["HOG_THRESH"] = str(c.hog_thresh)
             self.cfg[cstr]["MOG2_SENSITIVITY"] = str(c.mog2_sensitivity)
+        self.logger.debug(whoami() + "camera data copied to DB")
         # USER
         with self.lock:
             users = self.USER.select()
@@ -372,6 +375,7 @@ class G3DB():
             ustr = "USER" + str(i)
             self.cfg[ustr]["USERNAME"] = u.username
             self.cfg[ustr]["PASSWORD"] = u.password
+        self.logger.debug(whoami() + "user data copied to DB")
         # write to cfg_file
         cfg_file = self.dirs["main"] + "guck3.config"
         try:
@@ -384,7 +388,7 @@ class G3DB():
 
     def close(self):
         self.db.execute_sql("VACUUM")
-        self.db.backup(self.db_file)
+        # self.db.backup(self.db_file)
         self.db.drop_tables(self.tablelist)
         self.db.close()
-        self.db_file.close()
+        # self.db_file.close()

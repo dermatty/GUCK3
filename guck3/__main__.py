@@ -1,3 +1,4 @@
+import json
 import os
 import sensors
 import psutil
@@ -5,9 +6,8 @@ import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader
 from guck3.mplogging import whoami
-from guck3.g3db import G3DB
 import datetime
 import signal
 import sys
@@ -105,6 +105,8 @@ class SigHandler_g3:
         trstr = self.get_trstr(exit_status)
         if mp_wf:
             if mp_wf.pid:
+                os.kill(mp_wf.pid, signal.SIGFPE)
+                time.sleep(0.2)
                 print(trstr + "joining flask webserver, this may take a while ...")
                 os.kill(mp_wf.pid, signal.SIGTERM)
                 mp_wf.join()
@@ -158,14 +160,14 @@ class StateData:
 
 
 class KeyboardThread(Thread):
-    def __init__(self, state_data, db, mp_loggerqueue, logger):
+    def __init__(self, state_data, cfgr, mp_loggerqueue, logger):
         Thread.__init__(self)
         self.daemon = True
         self.state_data = state_data
         self.mp_loggerqueue = mp_loggerqueue
         self.pd_inqueue = self.state_data.PD_INQUEUE
         self.pd_outqueue = self.state_data.PD_OUTQUEUE
-        self.db = db
+        self.cfgr = cfgr
         self.logger = logger
         self.running = False
         self.active = self.get_config()
@@ -174,7 +176,7 @@ class KeyboardThread(Thread):
         self.is_shutdown = False
 
     def get_config(self):
-        active = self.db.get_options()["keyboard_active"]
+        active = self.cfgr.get_options()["keyboard_active"]
         return active
 
     def sighandler_kbd(self, a,  b):
@@ -212,12 +214,12 @@ class KeyboardThread(Thread):
 
 
 class TelegramThread:
-    def __init__(self, state_data, db, mp_loggerqueue, logger):
+    def __init__(self, state_data, cfgr, mp_loggerqueue, logger):
         self.state_data = state_data
         self.mp_loggerqueue = mp_loggerqueue
         self.pd_inqueue = self.state_data.PD_INQUEUE
         self.pd_outqueue = self.state_data.PD_OUTQUEUE
-        self.db = db
+        self.cfgr = cfgr
         self.logger = logger
         self.active, self.token, self.chatids = self.get_config()
         self.running = False
@@ -263,18 +265,17 @@ class TelegramThread:
                 self.logger.warning(whoami() + str(e) + ": chat_id " + str(c))
 
     def get_config(self):
-        t = self.db.get_telegram()
-        active = t["active"]
-        if not active:
+        t = self.cfgr.get_telegram()
+        if t["active"].lower() == "no":
             return False, None, None
         try:
             token = t["token"]
-            chatids = t["chatids"]
+            chatids = json.loads(t["chatids"])
             self.logger.debug(whoami() + "got config for active telegram bot")
         except Exception as e:
             self.logger.debug(whoami() + str(e) + "telegram config error, setting telegram to inactive!")
             return False, None, None
-        return active, token, chatids
+        return True, token, chatids
 
     def handler(self, update, context):
         msg = update.message.text.lower()
@@ -440,6 +441,8 @@ def run():
         print(str(datetime.datetime.now()) + ": START UP - " + str(e) + ": config file syntax error, exiting")
         return -1
 
+    cfgr = ConfigReader(cfg)
+
     # get log level
     try:
         loglevel_str = cfg["OPTIONS"]["LOGLEVEL"].lower()
@@ -478,19 +481,9 @@ def run():
     signal.signal(signal.SIGINT, sh.sighandler_g3)
     signal.signal(signal.SIGTERM, sh.sighandler_g3)
 
-    # init DB
-    mplock = mp.Lock()
-    db = G3DB(mplock, cfg, dirs, logger)
-    db.copy_cfg_to_db()    # read cfg file to DB
-    if not db.copyok:
-        logger.error(whoami() + ": cannot init DB, exiting")
-        sh.shutdown()
-        db.close()
-        return -1
-
     # save photos setup
     try:
-        options = db.get_options()
+        options = cfgr.get_options()
         save_photos = options["storephotos"]
         addtl_photo_path = options["addtl_photo_path"]
         if addtl_photo_path.lower() == "none":
@@ -516,19 +509,22 @@ def run():
         webflask.REDISCLIENT.ping()
     except Exception:
         logger.error(whoami() + "cannot start webserver due to redis server not available, exiting")
-        db.close()
         sh.shutdown()
         return -1
-    state_data.mpp_webflask = mp.Process(target=webflask.main, args=(cfg, mplock, dirs, state_data.WF_OUTQUEUE,
+    state_data.mpp_webflask = mp.Process(target=webflask.main, args=(cfg, dirs, state_data.WF_OUTQUEUE,
                                                                      state_data.WF_INQUEUE, mp_loggerqueue, ))
     state_data.mpp_webflask.start()
+    if state_data.WF_INQUEUE.get() == "False":
+        logger.error(whoami() + ": cannot init DB, exiting")
+        sh.shutdown()
+        return -1
 
     # Telegram
-    state_data.TG = TelegramThread(state_data, db, mp_loggerqueue, logger)
+    state_data.TG = TelegramThread(state_data, cfgr, mp_loggerqueue, logger)
     state_data.TG.start()
 
     # KeyboardThread
-    state_data.KB = KeyboardThread(state_data, db, mp_loggerqueue, logger)
+    state_data.KB = KeyboardThread(state_data, cfgr, mp_loggerqueue, logger)
     state_data.KB.start()
 
     commlist = [state_data.TG, state_data.KB]
@@ -583,7 +579,7 @@ def run():
             if mq_cmd == "start":
                 mpp_peopledetection = mp.Process(target=peopledetection.run_cameras,
                                                  args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, state_data.DIRS,
-                                                       mplock, cfg, mp_loggerqueue, ))
+                                                       cfg, mp_loggerqueue, ))
                 mpp_peopledetection.start()
                 state_data.mpp_peopledetection = mpp_peopledetection
                 state_data.PD_OUTQUEUE.put((mq_param + "_active", True))
@@ -629,12 +625,6 @@ def run():
         exitcode = 3
     # close all the other mps & stuff
     sh.shutdown(exitcode)
-    # close db
-    ret = db.copy_db_to_cfg()
-    if ret == -1:
-        exitcode = -1
-    db.clear()
-    db.close()
 
     if sys.stdout != old_sys_stdout:
         sys.stdout = old_sys_stdout
