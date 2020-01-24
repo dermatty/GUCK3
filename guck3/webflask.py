@@ -50,11 +50,9 @@ def number_of_workers():
 
 def sighandler(a, b):
     try:
-        DB.copy_db_to_cfg()
-        DB.clear()
-        DB.close()
-    except Exception:
-        pass
+        DB.closeall()
+    except Exception as e:
+        print(str(e))
 
 
 # -------------- Init Flask App --------------
@@ -107,7 +105,12 @@ class MainCommunicator(Thread):
                     cmd, data = self.inqueue.get()
             except Exception:
                 pass
-            if cmd != self.pd_active or self.db.userdata_updated_since(self.last_sse_published):
+            try:
+                lastuserdata_tt = float(REDISCLIENT.get("userdata_last_updated").decode())
+                userdata_updated_since = (lastuserdata_tt > self.last_sse_published)
+            except Exception:
+                userdata_updated_since = False
+            if cmd != self.pd_active or userdata_updated_since:
                 self.pd_active = cmd
                 self.sse_publish()
             time.sleep(0.5)
@@ -127,6 +130,7 @@ def beforerequest():
         g.user = user0
         if user0 is not None:
             userdata = DB.get_userdata()
+            user_in_userdata = False
             if userdata:
                 user_in_userdata = (len([1 for key in userdata if key == user0]) > 0)
             if not userdata or not user_in_userdata:
@@ -134,6 +138,7 @@ def beforerequest():
             else:
                 DB.update_userdata(user0, time.time(), True, userdata[user0]["no_newdetections"],
                                    userdata[user0]["photolist"])
+            REDISCLIENT.set("userdata_last_updated", time.time())
     except Exception as e:
         app.logger.info(whoami() + str(e))
         pass
@@ -291,10 +296,9 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
 
     tlock = Lock()
     DB = G3DB(tlock, cfg, dirs, app.logger)
-    DB.copy_cfg_to_db()    # read cfg file to DB
     if not DB.copyok:
         app.logger.error(whoami() + ": cannot init DB, exiting")
-        DB.close()
+        DB.closeall()
         outqueue.put("False")
     else:
         outqueue.put("True")

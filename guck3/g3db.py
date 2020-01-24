@@ -1,6 +1,5 @@
 from peewee import Model, SqliteDatabase, CharField, BooleanField, IntegerField, FloatField
 from playhouse.fields import PickleField
-from playhouse.sqlite_ext import CSqliteExtDatabase
 from guck3.mplogging import whoami
 import json
 import os
@@ -15,8 +14,6 @@ class G3DB():
         self.lock = mplock
         self.dirs = dirs
         self.db_file_name = dirs["main"] + "guck3.db"
-        # self.db = CSqliteExtDatabase(":memory:")
-        # self.db_file = CSqliteExtDatabase(self.db_file_name)
         self.db = SqliteDatabase(self.db_file_name)
 
         class BaseModel(Model):
@@ -96,20 +93,14 @@ class G3DB():
         self.TELEGRAM = TELEGRAM
         self.USERDATA = USERDATA
         self.tablelist = [self.USER, self.CAMERA, self.OPTIONS, self.TELEGRAM, self.USERDATA]
+
         self.db.connect()
         self.db.create_tables(self.tablelist)
+
         self.SQLITE_MAX_VARIABLE_NUMBER = int(max_sql_variables() / 4)
         self.logger.debug(whoami() + "SQLITE_MAX_VARIABLE_NUMBER = " + str(self.SQLITE_MAX_VARIABLE_NUMBER))
 
-    def clear(self):
-        u = self.USER.delete()
-        u.execute()
-        c = self.CAMERA.delete()
-        c.execute()
-        o = self.OPTIONS.delete()
-        o.execute()
-        t = self.TELEGRAM.delete()
-        t.execute()
+        self.copy_cfg_to_db()
 
     # ---- USERS ------
     def get_users(self):
@@ -135,19 +126,13 @@ class G3DB():
             return None
         return userdata
 
-    def userdata_updated_since(self, lasttm_sse):
-        try:
-            entries = self.USERDATA.select().where(self.USERDATA.lasttm > lasttm_sse)
-            if entries:
-                return True
-        except Exception:
-            pass
-        return False
-
     def insert_new_userdata(self, username, lasttm, active, no_newdetections, photolist):
-        with self.lock:
-            self.USERDATA.create(username=username, lasttm=lasttm, active=active, no_newdetections=no_newdetections,
-                                 photolist=photolist)
+        try:
+            with self.lock:
+                self.USERDATA.create(username=username, lasttm=lasttm, active=active, no_newdetections=no_newdetections,
+                                     photolist=photolist)
+        except Exception as e:
+            self.logger.warning(whoami() + str(e) + ": cannot insert USERDATA")
 
     def update_userdata(self, username, lasttm, active, no_newdetections, photolist):
         try:
@@ -386,9 +371,17 @@ class G3DB():
             return -1
         return 1
 
-    def close(self):
-        self.db.execute_sql("VACUUM")
-        # self.db.backup(self.db_file)
+    def closeall(self):
+        self.logger.info(whoami() + "starting db closeall procedure ...")
+        self.copy_db_to_cfg()
+        c = self.USERDATA.delete()
+        c.execute()
+        c = self.CAMERA.delete()
+        c.execute()
+        o = self.OPTIONS.delete()
+        o.execute()
+        t = self.TELEGRAM.delete()
+        t.execute()
         self.db.drop_tables(self.tablelist)
         self.db.close()
-        # self.db_file.close()
+        self.logger.info(whoami() + "... closeall procedure done!")
