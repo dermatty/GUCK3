@@ -73,8 +73,8 @@ class BaseCamera(object):
 
 
 class Camera(BaseCamera):
-    def __init__(self, camnr, db):
-        cameralist = [(cd["name"], cd["stream_url"]) for cd in db.get_cameras()]
+    def __init__(self, camnr, red):
+        cameralist = [(cd["name"], cd["stream_url"]) for cd in red.get_cameras()]
         Camera.name, Camera.surl = cameralist[camnr]
         super(Camera, self).__init__()
 

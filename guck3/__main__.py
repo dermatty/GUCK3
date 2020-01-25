@@ -109,7 +109,10 @@ class SigHandler_g3:
                 time.sleep(0.2)
                 print(trstr + "joining flask webserver, this may take a while ...")
                 os.kill(mp_wf.pid, signal.SIGTERM)
-                mp_wf.join()
+                mp_wf.join(timeout=10)
+                if mp_wf.is_alive():
+                    os.kill(mp_wf.pid, signal.SIGQUIT)
+                    mp_wf.join()
                 print(self.get_trstr(exit_status) + "flask webserver exited!")
         trstr = self.get_trstr(exit_status)
         if self.mp_loglistener:

@@ -9,7 +9,7 @@ from flask_session import Session
 import flask_login
 from setproctitle import setproctitle
 from guck3.mplogging import whoami
-from guck3.g3db import G3DB
+from guck3.g3db import RedisAPI
 from guck3.camera import gen, Camera
 import time
 from guck3 import models, setup_dirs
@@ -21,7 +21,7 @@ import requests
 import signal
 
 
-DB = None
+RED = None
 USERS = None
 DIRS = None
 maincomm = None
@@ -50,7 +50,7 @@ def number_of_workers():
 
 def sighandler(a, b):
     try:
-        DB.closeall()
+        RED.copy_redis_to_cameras_cfg()
     except Exception as e:
         print(str(e))
 
@@ -68,14 +68,14 @@ Session(app)
 # -------------- MainCommunicator --------------
 class MainCommunicator(Thread):
 
-    def __init__(self, inqueue, outqueue, app, db):
+    def __init__(self, inqueue, outqueue, app, red):
         Thread.__init__(self)
         self.daemon = True
         self.inqueue = inqueue
         self.outqueue = outqueue
         self.lock = Lock()
         self.app = app
-        self.db = db
+        self.red = red
         self.userdata_updated = False
 
     def sse_publish(self):
@@ -106,7 +106,7 @@ class MainCommunicator(Thread):
             except Exception:
                 pass
             try:
-                lastuserdata_tt = float(REDISCLIENT.get("userdata_last_updated").decode())
+                lastuserdata_tt = self.red.get_userdata_last_updated()
                 userdata_updated_since = (lastuserdata_tt > self.last_sse_published)
             except Exception:
                 userdata_updated_since = False
@@ -129,16 +129,12 @@ def beforerequest():
         user0 = flask_login.current_user.get_id()
         g.user = user0
         if user0 is not None:
-            userdata = DB.get_userdata()
-            user_in_userdata = False
-            if userdata:
-                user_in_userdata = (len([1 for key in userdata if key == user0]) > 0)
+            userdata, user_in_userdata = RED.user_in_userdata(user0)
             if not userdata or not user_in_userdata:
-                DB.insert_new_userdata(user0, time.time(), True, 0, [])
+                RED.insert_update_userdata(user0, time.time(), True, 0, [])
             else:
-                DB.update_userdata(user0, time.time(), True, userdata[user0]["no_newdetections"],
-                                   userdata[user0]["photolist"])
-            REDISCLIENT.set("userdata_last_updated", time.time())
+                RED.insert_update_userdata(user0, time.time(), True, userdata[user0]["no_newdetections"],
+                                           userdata[user0]["photolist"])
     except Exception as e:
         app.logger.info(whoami() + str(e))
         pass
@@ -219,7 +215,7 @@ def detections():
 
 @app.route('/video_feed/<camnr>')
 def video_feed(camnr):
-    return Response(gen(Camera(int(camnr)-1, DB)), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(gen(Camera(int(camnr)-1, RED)), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.route("/livecam", defaults={"camnrstr": 0, "ptz": 0}, methods=['GET', 'POST'])
@@ -230,7 +226,7 @@ def livecam(camnrstr=0, ptz=0):
     if request.method == "GET":
         ptz0 = int(ptz)
         camnr = int(camnrstr)
-        cameradata = DB.get_cameras()
+        cameradata = RED.get_cameras()
         cameralist = [(cd["name"], cd["photo_url"], cd["stream_url"]) for cd in cameradata]
         if ptz0 != 0 and len(cameralist)-1 >= camnr:
             ptzlist = [(cd["ptz_up_url"], cd["ptz_down_url"], cd["ptz_left_url"], cd["ptz_right_url"])
@@ -276,7 +272,7 @@ class StandaloneApplication(gunicorn.app.base.BaseApplication):
 
 
 def main(cfg, dirs, inqueue, outqueue, loggerqueue):
-    global DB
+    global RED
     global USERS
     global DIRS
     global app
@@ -294,26 +290,24 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
 
     app.logger.info(whoami() + "starting ...")
 
-    tlock = Lock()
-    DB = G3DB(tlock, cfg, dirs, app.logger)
-    if not DB.copyok:
-        app.logger.error(whoami() + ": cannot init DB, exiting")
-        DB.closeall()
+    RED = RedisAPI(REDISCLIENT, dirs, cfg, app.logger)
+    if not RED.copyok:
+        app.logger.error(whoami() + ": cannot init redis, exiting")
         outqueue.put("False")
     else:
         outqueue.put("True")
 
-    # Password
-    USERS = DB.get_users()
+    USERS = RED.get_users()
 
     # start communicator thread
-    maincomm = MainCommunicator(inqueue, outqueue, app, DB)
+    maincomm = MainCommunicator(inqueue, outqueue, app, RED)
     maincomm.start()
 
     options = {
         'bind': '%s:%s' % ('127.0.0.1', '8080'),
-        'capture-output': True,
+        'capture_output': True,
         'debug': True,
+        'graceful_timeout': 10,
         'workers': number_of_workers(),
     }
     signal.signal(signal.SIGFPE, sighandler)     # nicht die feine englische / faut de mieux
