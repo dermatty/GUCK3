@@ -52,6 +52,9 @@ def number_of_workers():
 def sighandler(a, b):
     try:
         RED.copy_redis_to_cameras_cfg()
+        filelist = [f for f in os.listdir("./guck3/static/") if f.endswith(".jpg")]
+        for f in filelist:
+            os.remove("./guck3/static/" + f)
     except Exception as e:
         print(str(e))
 
