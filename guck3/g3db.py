@@ -1,13 +1,8 @@
-from peewee import Model, SqliteDatabase, CharField, BooleanField, IntegerField, FloatField
-from playhouse.fields import PickleField
 from guck3.mplogging import whoami
-import json
-import os
-import os.path
 import pickle
 import time
 
-class G3DB():
+'''class G3DB():
 
     def __init__(self, mplock, cfg, dirs, logger):
         self.logger = logger
@@ -385,7 +380,7 @@ class G3DB():
         t.execute()
         self.db.drop_tables(self.tablelist)
         self.db.close()
-        self.logger.info(whoami() + "... closeall procedure done!")
+        self.logger.info(whoami() + "... closeall procedure done!")'''
 
 
 # --------------- REDIS API -------------------
@@ -399,10 +394,15 @@ class RedisAPI:
         self.copyok = True
         if not self.getp("g3_userdata"):
             self.setp("g3_userdata", {})
+        if not self.getp("g3_photodata"):
+            self.setp("g3_photodata", [])
         if not self.getp("g3_userdata_last_updated"):
             self.setp("g3_userdata_last_updated", 0)
+        if not self.getp("g3_new_detections"):
+            self.setp("g3_new_detections", 0)
         self.copy_users_to_redis()
         self.copy_cameras_to_redis()
+        self.setp("g3_putcmd", "")
 
     def setp(self, key, value):
         try:
@@ -417,6 +417,14 @@ class RedisAPI:
             return ret
         except Exception:
             return None
+
+    def set_putcmd(self, cmd):
+        self.setp("g3_putcmd", cmd)
+
+    def get_putcmd(self):
+        ret = self.getp("g3_putcmd")
+        self.setp("g3_putcmd", "")
+        return ret
 
     def copy_redis_to_cameras_cfg(self):
         self.logger.debug(whoami() + "copying redis camera data to config ...")
@@ -528,6 +536,17 @@ class RedisAPI:
             return
         self.setp("g3_users", users)
         self.logger.debug(whoami() + "user data copied to db")
+
+    def get_photodata(self):
+        return self.getp("g3_photodata")
+
+    def insert_photodata(self, photonames):
+        photodata = self.getp("g3_photodata")
+        for p in photonames:
+            photodata.insert(0, p)
+            if len(photodata) > 15:
+                del photodata[-1]
+        self.setp("g3_photodata", photodata)
 
     def get_users(self):
         return self.getp("g3_users")

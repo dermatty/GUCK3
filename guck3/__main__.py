@@ -30,7 +30,7 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     global RESTART
     # bot = tgram / kbd
     bot0 = bot.lower()
-    if bot0 not in ["tgram", "kbd"]:
+    if bot0 not in ["tgram", "kbd", "wf"]:
         return None
 
     if msg == "start":
@@ -487,17 +487,10 @@ def run():
     # save photos setup
     try:
         options = cfgr.get_options()
-        save_photos = options["storephotos"]
         addtl_photo_path = options["addtl_photo_path"]
         if addtl_photo_path.lower() == "none":
             addtl_photo_path = None
-        else:
-            if addtl_photo_path == "None":
-                save_photos = False
-                addtl_photo_path = None
-    except Exception as e:
-        logger.warning(whoami() + str(e) + ": setting 'store_photos' to 'No'!")
-        save_photos = False
+    except Exception:
         addtl_photo_path = None
 
     # init queues
@@ -532,13 +525,23 @@ def run():
 
     commlist = [state_data.TG, state_data.KB]
 
+    wf_msglist = []
+    pd_cmd = None
+
     while not TERMINATED:
         time.sleep(0.02)
         # get from webflask queue
         try:
             wf_cmd, wf_data = state_data.WF_INQUEUE.get_nowait()
             if wf_cmd == "get_pd_status":
+                state_data.WF_OUTQUEUE.put((state_data.PD_ACTIVE, wf_msglist))
+                wf_msglist = []
+            elif wf_cmd == "set_pdstart":
                 state_data.WF_OUTQUEUE.put((state_data.PD_ACTIVE, None))
+                pd_cmd = "start"
+            elif wf_cmd == "set_pdstop":
+                state_data.WF_OUTQUEUE.put((state_data.PD_ACTIVE, None))
+                pd_cmd = "stop"
         except (queue.Empty, EOFError):
             pass
         except Exception:
@@ -562,24 +565,35 @@ def run():
                     for c in commlist:
                         c.send_message_all(str(datetime.datetime.now()) + ": Human detected @ camera " + c_cname + "!")
                     # save photo
-                    if save_photos:
-                        datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
-                        short_photo_name = c_cname + "_" + datestr + ".jpg"
-                        photo_name = dirs["photo"] + short_photo_name
-                        try:
-                            cv2.imwrite(photo_name, c_frame)
-                            if addtl_photo_path:
-                                photo_name2 = addtl_photo_path + c_cname + "_" + datestr + ".jpg"
-                                cv2.imwrite(photo_name2, c_frame)
-                            logger.debug(whoami() + "saved detection photo " + photo_name)
-                        except Exception as e:
-                            logger.warning(whoami() + str(e))
+                    datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
+                    short_photo_name = c_cname + "_" + datestr + ".jpg"
+                    photo_name = dirs["photo"] + short_photo_name
+                    wf_msglist.insert(0, photo_name)
+                    try:
+                        cv2.imwrite(photo_name, c_frame)
+                        if addtl_photo_path:
+                            photo_name2 = addtl_photo_path + c_cname + "_" + datestr + ".jpg"
+                            cv2.imwrite(photo_name2, c_frame)
+                        logger.debug(whoami() + "saved detection photo " + photo_name)
+                    except Exception as e:
+                        logger.warning(whoami() + str(e))
 
         # get el from main queue (GeneralMsgHandler)
         # because we cannot start pdedector from thread! (keras/tf bug/feature!?)
         try:
-            mq_cmd, mq_param = state_data.MAINQUEUE.get_nowait()
-            if mq_cmd == "start":
+            mq_cmd = None
+            mq_param = None
+            if not pd_cmd:
+                mq_cmd, mq_param = state_data.MAINQUEUE.get_nowait()
+            else:
+                if pd_cmd == "start":
+                    mq_cmd = "start"
+                    mq_param = "wf"
+                elif pd_cmd == "stop":
+                    mq_cmd = "stop"
+                    mq_param = "wf"
+                pd_cmd = None
+            if mq_cmd == "start" and not state_data.PD_ACTIVE:
                 mpp_peopledetection = mp.Process(target=peopledetection.run_cameras,
                                                  args=(state_data.PD_INQUEUE, state_data.PD_OUTQUEUE, state_data.DIRS,
                                                        cfg, mp_loggerqueue, ))
@@ -590,8 +604,10 @@ def run():
                     pd_answer, pd_prm = state_data.PD_INQUEUE.get()
                     if "error" in pd_answer:
                         state_data.PD_ACTIVE = False
+                        logger.error(whoami() + ": cameras/PD startup failed!")
                         state_data.mpp_peopledetection.join()
                     else:
+                        logger.info(whoami() + "cameras/PD started!")
                         state_data.PD_ACTIVE = True
                 except Exception as e:
                     logger.error(whoami() + str(e) + ": cannot communicate with peopledetection, trying to exit!")
@@ -604,6 +620,7 @@ def run():
                     TERMINATED = True
             elif mq_cmd == "stop":
                 if state_data.mpp_peopledetection:
+                    print("STOPPING ....")
                     if state_data.mpp_peopledetection.pid:
                         state_data.PD_OUTQUEUE.put(("stop", None))
                         state_data.mpp_peopledetection.join()

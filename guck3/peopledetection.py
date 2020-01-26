@@ -378,6 +378,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
         cameras.append(camera)
 
     startup_cams(cameras)
+    logger.info(whoami() + "all cameras started!")
 
     tgram_active = False
     kbd_active = False
@@ -400,6 +401,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
         logger.warning(whoami() + "showframes not set in config, setting to default False!")
         showframes = False
 
+    lastdetection_tt = 0
     while not TERMINATED:
 
         time.sleep(0.04)
@@ -419,7 +421,8 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
                             cv2.imshow(c.cname, c.frame)
                         c.write_record()
                         new_detections = c.get_new_detections()
-                        if new_detections:
+                        if new_detections and time.time() - lastdetection_tt > 1:
+                            lastdetection_tt = time.time()
                             mainmsg = "detection"
                         c.clear_new_detections()
                 except Exception as e:
@@ -432,21 +435,19 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
         if showframes:
             cv2.waitKey(1) & 0xFF
 
-        # telegram handler
-        if tgram_active or kbd_active:
-            try:
-                cmd, param = pd_inqueue.get_nowait()
-                logger.debug(whoami() + "received " + cmd)
-                if cmd == "stop":
-                    break
-                elif cmd == "record on":
-                    start_all_recordings(cameras)
-                elif cmd == "record off":
-                    stop_all_recordings(cameras)
-            except (queue.Empty, EOFError):
-                continue
-            except Exception:
-                continue
+        try:
+            cmd, param = pd_inqueue.get_nowait()
+            logger.debug(whoami() + "received " + cmd)
+            if cmd == "stop":
+                break
+            elif cmd == "record on":
+                start_all_recordings(cameras)
+            elif cmd == "record off":
+                stop_all_recordings(cameras)
+        except (queue.Empty, EOFError):
+            continue
+        except Exception:
+            continue
 
     shutdown_cams(cameras)
     clear_all_queues([pd_inqueue, pd_outqueue])

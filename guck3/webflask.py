@@ -19,6 +19,7 @@ import redis
 import configparser
 import requests
 import signal
+import shutil
 
 
 RED = None
@@ -77,22 +78,23 @@ class MainCommunicator(Thread):
         self.app = app
         self.red = red
         self.userdata_updated = False
+        self.no_detections = 0
 
     def sse_publish(self):
         if self.pd_active:
             with self.app.app_context():
-                result0 = render_template("guckphoto.html", nralarms=0, guckstatus="on", dackel="bark")
+                result0 = render_template("guckphoto.html", nralarms=self.no_detections, guckstatus="on")
                 type0 = "nrdet0"
                 sse.publish({"message": result0}, type=type0)
                 type0 = "title0"
-                sse.publish({"message": str(0)}, type=type0)
+                sse.publish({"message": str(self.no_detections)}, type=type0)
         else:
             with self.app.app_context():
-                result0 = render_template("guckphoto.html", nralarms=0, guckstatus="off", dackel="nobark")
+                result0 = render_template("guckphoto.html", nralarms=self.no_detections, guckstatus="off")
                 type0 = "nrdet0"
                 sse.publish({"message": result0}, type=type0)
                 type0 = "title0"
-                sse.publish({"message": str(0)}, type=type0)
+                sse.publish({"message": str(self.no_detections)}, type=type0)
         self.last_sse_published = time.time()
 
     def run(self):
@@ -101,8 +103,20 @@ class MainCommunicator(Thread):
         while True:
             try:
                 with self.lock:
-                    self.outqueue.put(("get_pd_status", None))
-                    cmd, data = self.inqueue.get()
+                    pcmd = self.red.get_putcmd()
+                    if pcmd == "pdstart":
+                        self.outqueue.put(("set_pdstart", None))
+                        cmd, data = self.inqueue.get()
+                    elif pcmd == "pdstop":
+                        self.outqueue.put(("set_pdstop", None))
+                        cmd, data = self.inqueue.get()
+                    else:
+                        self.outqueue.put(("get_pd_status", None))
+                        cmd, data = self.inqueue.get()
+                        try:
+                            new_detections = len(data)
+                        except Exception:
+                            new_detections = 0
             except Exception:
                 pass
             try:
@@ -110,8 +124,11 @@ class MainCommunicator(Thread):
                 userdata_updated_since = (lastuserdata_tt > self.last_sse_published)
             except Exception:
                 userdata_updated_since = False
-            if cmd != self.pd_active or userdata_updated_since:
+            if cmd != self.pd_active or userdata_updated_since or new_detections > 0:
+                if new_detections > 0:
+                    self.red.insert_photodata(data)
                 self.pd_active = cmd
+                self.no_detections += new_detections
                 self.sse_publish()
             time.sleep(0.5)
 
@@ -200,7 +217,25 @@ def userlogin():
 @app.route("/home", methods=['GET', 'POST'])
 @flask_login.login_required
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
+
+
+# -------------- pd_start --------------
+
+@app.route("/pdstart", methods=['GET', 'POST'])
+@flask_login.login_required
+def pdstart():
+    RED.set_putcmd("pdstart")
+    return render_template("start.html")
+
+
+# -------------- pd_stop --------------
+
+@app.route("/pdstop", methods=['GET', 'POST'])
+@flask_login.login_required
+def pdstop():
+    RED.set_putcmd("pdstop")
+    return render_template("stop.html")
 
 
 # -------------- detections --------------
@@ -208,7 +243,15 @@ def index():
 @app.route("/detections", methods=['GET', 'POST'])
 @flask_login.login_required
 def detections():
-    return render_template('index.html')
+    filelist = [f for f in os.listdir("./guck3/static/") if f.endswith(".jpg")]
+    for f in filelist:
+        os.remove("./guck3/static/" + f)
+    detlist = []
+    for p in RED.get_photodata():
+        p1 = os.path.basename(p)
+        shutil.copy(p, "./guck3/static/" + p1)
+        detlist.append(p1)
+    return render_template('detections.html', detlist=detlist)
 
 
 # -------------- livecam --------------
