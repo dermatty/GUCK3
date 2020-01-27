@@ -223,6 +223,41 @@ def index():
     return render_template("index.html")
 
 
+# -------------- config --------------
+
+@app.route("/config", methods=['GET', 'POST'])
+@flask_login.login_required
+def config():
+    config_file = DIRS["main"] + "guck3.config"
+    content = ""
+    with open(config_file, "r") as f:
+        content = ""
+        for line in f:
+            content += (line + "<br>")
+    if request.method == 'POST':
+        # check if user cancel was pressed.
+        if request.form['submit'] == 'cancel':
+            if id:
+                # user canceled a page edit, return to page view
+                return redirect(url_for('index'))
+            else:
+                # user canceled a new page creation, return to index
+                return redirect(url_for('index'))
+        # user hit submit, so get the data from the form.
+        # look for required title and content
+        if content != "":
+            # now, update or insert into database            
+            # redirect to page view
+            content = request.form.get('editordata').replace("<br>","")
+            print(content)
+            return redirect(url_for('index'))
+        else:
+            # indicate a failure to enter required data
+            status = 'ERROR: page title and content are required!'
+        
+    return render_template('configedit.html', content=content, config_file=config_file)
+
+
 # -------------- pd_start --------------
 
 @app.route("/pdstart", methods=['GET', 'POST'])

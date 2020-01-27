@@ -8,6 +8,10 @@
         <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
         <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/bootbox.js/4.4.0/bootbox.min.js"></script>
+        {# below is the CDN for the SummerNote control #}
+        <!-- include summernote css/js -->
+        <link href="https://cdn.jsdelivr.net/npm/summernote@0.8.15/dist/summernote.min.css" rel="stylesheet">
+        <script src="https://cdn.jsdelivr.net/npm/summernote@0.8.15/dist/summernote.min.js"></script>
         <style>
          .navbar-custom { font-size: 18px;}
          .navbar-brand { font-size: 32px;}
@@ -69,7 +73,8 @@
                 {% set navbar0_dd = [("home","/home","Home",".", ".", ".", ".", ".",".","."),
                                      ("livecam", "/livecam","LiveCam",".", ".", ".", ".", ".",".","."),
                                      ("start","/pdstart","Start",".", ".", ".", ".", ".",".","."),
-                                     ("stop","/pdstop","Stop",".", ".", ".", ".", ".",".",".")] %} 
+                                     ("stop","/pdstop","Stop",".", ".", ".", ".", ".",".","."),
+                                     ("config","/config","Config",".", ".", ".", ".", ".",".",".")] %} 
                 <!-- ("guck","/guck","Guck","start", "status","photo","config","system","stop","runtime-settings"),
                 ("location","/location","Location", ".",".",".",".",".",".","."),
                 ("hue","/hue","Hue",".",".",".",".",".",".",".")] %} -->
