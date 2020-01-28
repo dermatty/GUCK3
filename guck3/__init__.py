@@ -1,8 +1,9 @@
-import ftplib
+import configparser
 from os.path import expanduser
 import os
 import shutil
 import queue
+import json
 
 
 class ConfigReader:
@@ -132,3 +133,98 @@ def clear_all_queues(queuelist):
                 q.get_nowait()
             except (queue.Empty, EOFError):
                 break
+
+
+def check_cfg_file(cfgfile):
+    try:
+        cfg = configparser.ConfigParser()
+        cfg.read(cfgfile)
+    except Exception:
+        return "error in reading config file!", False
+    # USER
+    idx = 1
+    while True:
+        str0 = "USER" + str(idx)
+        try:
+            assert cfg[str0]["USERNAME"]
+            userok = False
+            assert cfg[str0]["PASSWORD"]
+            userok = True
+        except Exception:
+            break
+        idx += 1
+    if idx == 1 or not userok:
+        return "error in cfg file [USER]!", False
+    # CAMERA
+    idx = 1
+    while True:
+        str0 = "CAMERA" + str(idx)
+        try:
+            assert cfg[str0]
+        except Exception:
+            break
+        try:
+            cameraok = False
+            assert cfg[str0]["NAME"] != ""
+            assert cfg[str0]["ACTIVE"].lower() in ["yes", "no"]
+            assert cfg[str0]["STREAM_URL"] != ""
+            assert cfg[str0]["PHOTO_URL"] != ""
+            assert cfg[str0]["REBOOT_URL"]
+            assert cfg[str0]["PTZ_MODE"].lower() in ["start", "startstop", "none"]
+            assert cfg[str0]["PTZ_RIGHT_URL"]
+            assert cfg[str0]["PTZ_LEFT_URL"]
+            assert cfg[str0]["PTZ_UP_URL"]
+            assert cfg[str0]["PTZ_DOWN_URL"]
+            assert int(cfg[str0]["MIN_AREA_RECT"]) > 0
+            assert float(cfg[str0]["HOG_SCALE"]) > 0
+            assert float(cfg[str0]["HOG_THRESH"]) > 0
+            assert float(cfg[str0]["MOG2_SENSITIVITY"])
+            cameraok = True
+        except Exception:
+            break
+        idx += 1
+    if idx == 1 or not cameraok:
+        return "error in cfg file [CAMERA]!", False
+    # OPTIONS
+    try:
+        assert cfg["OPTIONS"]["REDIS_HOST"].strip() != ""
+    except Exception:
+        return "error in cfg file [OPTIONS][REDIS_HOST]!", False
+    try:
+        assert int(cfg["OPTIONS"]["REDIS_PORT"]) > 0
+    except Exception:
+        return "error in cfg file [OPTIONS][REDIS_PORT]!", False
+    try:
+        assert cfg["OPTIONS"]["KEYBOARD_ACTIVE"].lower() in ["yes", "no"]
+    except Exception:
+        return "error in cfg file [OPTIONS][KEYBOARD_ACTIVE]!", False
+    try:
+        assert cfg["OPTIONS"]["LOGLEVEL"].lower() in ["debug", "info", "warning", "error"]
+    except Exception:
+        return "error in cfg file [OPTIONS][LOGLEVEL]!", False
+    try:
+        assert cfg["OPTIONS"]["SHOWFRAMES"].lower() in ["yes", "no"]
+    except Exception:
+        return "error in cfg file [OPTIONS][SHOWFRAMES]!", False
+    try:
+        assert cfg["OPTIONS"]["RETINANET_MODEL"]
+    except Exception:
+        return "error in cfg file [OPTIONS][RETINANET_MODEL]!", False
+    # no check for ["OPTIONS"]["ADDTL_PHOTO_PATH"] cause it iss optional
+    # TELEGRAM
+    try:
+        tgram_active = True if cfg["TELEGRAM"]["ACTIVE"].lower() == "yes" else False
+    except Exception:
+        return "error in cfg file [TELEGRAM][ACTIVE]!", False
+    if tgram_active:
+        try:
+            assert cfg["TELEGRAM"]["TOKEN"]
+        except Exception:
+            return "error in cfg file [TELEGRAM][TOKEN]!", False
+        try:
+            chatids = json.loads(cfg.get("TELEGRAM", "CHATIDS"))
+            if not isinstance(chatids, list):
+                return "error in cfg file [TELEGRAM][CHATIDS]!", False
+        except Exception:
+            return "error in cfg file [TELEGRAM][CHATIDS]!", False
+    return "", True

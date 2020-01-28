@@ -12,7 +12,7 @@ from guck3.mplogging import whoami
 from guck3.g3db import RedisAPI
 from guck3.camera import gen, Camera
 import time
-from guck3 import models, setup_dirs
+from guck3 import models, setup_dirs, check_cfg_file
 from threading import Thread, Lock
 import logging
 import redis
@@ -20,6 +20,7 @@ import configparser
 import requests
 import signal
 import shutil
+import html2text
 
 
 RED = None
@@ -228,34 +229,47 @@ def index():
 @app.route("/config", methods=['GET', 'POST'])
 @flask_login.login_required
 def config():
+    status = ""
     config_file = DIRS["main"] + "guck3.config"
     content = ""
-    with open(config_file, "r") as f:
-        content = ""
-        for line in f:
-            content += (line + "<br>")
-    if request.method == 'POST':
-        # check if user cancel was pressed.
+    if request.method == "GET":
+        with open(config_file, "r") as f:
+            content = ""
+            for line in f:
+                content += (line + "<br>")
+    elif request.method == 'POST':
+        h = html2text.HTML2Text()
+        h.body_width = 0
+        content = h.handle(request.form.get('editordata'))
         if request.form['submit'] == 'cancel':
-            if id:
-                # user canceled a page edit, return to page view
-                return redirect(url_for('index'))
-            else:
-                # user canceled a new page creation, return to index
-                return redirect(url_for('index'))
-        # user hit submit, so get the data from the form.
-        # look for required title and content
-        if content != "":
-            # now, update or insert into database            
-            # redirect to page view
-            content = request.form.get('editordata').replace("<br>","")
-            print(content)
             return redirect(url_for('index'))
+        elif request.form['submit'] == "submit" and content != "":
+            try:
+                temp_config_file = "config_file" + ".bak"
+                with open(temp_config_file, "w") as f:
+                    f.write(content)
+                errmsg, cfg_file_ok = check_cfg_file(temp_config_file)
+                if not cfg_file_ok:
+                    status = errmsg
+                else:
+                    try:
+                        with open(config_file, "w") as f:
+                            f.write(content)
+                        os.remove(temp_config_file)
+                        status = "config file saved!"
+                    except Exception:
+                        status = "cannot write config file!"
+            except Exception:
+                status = "cannot check config file (write error)!"
         else:
             # indicate a failure to enter required data
             status = 'ERROR: page title and content are required!'
-        
-    return render_template('configedit.html', content=content, config_file=config_file)
+        with open(config_file, "r") as f:
+            content = ""
+            for line in f:
+                content += (line + "<br>")
+
+    return render_template('configedit.html', content=content, config_file=config_file, status=status)
 
 
 # -------------- pd_start --------------
