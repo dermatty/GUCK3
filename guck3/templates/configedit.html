@@ -3,7 +3,7 @@
 {% block repstr %}
     <div class='container'>
     {% if status == "config file saved!" %}
-       <p><font color="green">{{status}}</font></p>
+       <p><font color="green">{{status}} - you have to restart to have changes to take effect!</font></p>
     {% elif status %}
        <p><font color="red">{{status}}</font></p>
     {% endif %}
@@ -25,12 +25,11 @@
           toolbar: [],
           spellCheck: false
         });
-      </script>
+        </script>
       </div>
-      <div class='form-group'>
-        {# note we use same name for Save and Cancel buttons, but a different value #}
-        <button type="submit" name="submit" value="submit" class="btn btn-info">Save & Restart</button>
-        <button type="cancel" name="submit" value="cancel" class="btn btn-secondary">Cancel</button>
+      <div class="form-group">
+            <button type="submit" name="submit" value="submit" class="btn btn-info">Save</button>
+            <button type="cancel" name="submit" value="cancel" class="btn btn-secondary">Cancel</button>
       </div>
     </form>
     </div>

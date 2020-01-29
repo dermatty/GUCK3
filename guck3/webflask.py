@@ -52,7 +52,7 @@ def number_of_workers():
 
 def sighandler(a, b):
     try:
-        RED.copy_redis_to_cameras_cfg()
+        # RED.copy_redis_to_cameras_cfg()
         filelist = [f for f in os.listdir("./guck3/static/") if f.endswith(".jpg")]
         for f in filelist:
             os.remove("./guck3/static/" + f)
@@ -110,6 +110,9 @@ class MainCommunicator(Thread):
                     pcmd = self.red.get_putcmd()
                     if pcmd == "pdstart":
                         self.outqueue.put(("set_pdstart", None))
+                        cmd, data = self.inqueue.get()
+                    elif pcmd == "pdrestart":
+                        self.outqueue.put(("set_pdrestart", None))
                         cmd, data = self.inqueue.get()
                     elif pcmd == "pdstop":
                         self.outqueue.put(("set_pdstop", None))
@@ -288,6 +291,13 @@ def pdstart():
 def pdstop():
     RED.set_putcmd("pdstop")
     return render_template("stop.html")
+
+# -------------- restart --------------
+@app.route("/pdrestart", methods=['GET', 'POST'])
+@flask_login.login_required
+def restart():
+    RED.set_putcmd("pdrestart")
+    return render_template("restart.html")
 
 
 # -------------- detections --------------

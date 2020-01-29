@@ -542,6 +542,9 @@ def run():
             elif wf_cmd == "set_pdstop":
                 state_data.WF_OUTQUEUE.put((state_data.PD_ACTIVE, None))
                 pd_cmd = "stop"
+            elif wf_cmd == "set_pdrestart":
+                state_data.WF_OUTQUEUE.put((state_data.PD_ACTIVE, None))
+                pd_cmd = "restart!!"
         except (queue.Empty, EOFError):
             pass
         except Exception:
@@ -591,6 +594,9 @@ def run():
                     mq_param = "wf"
                 elif pd_cmd == "stop":
                     mq_cmd = "stop"
+                    mq_param = "wf"
+                elif pd_cmd == "restart!!":
+                    mq_cmd = "restart!!"
                     mq_param = "wf"
                 pd_cmd = None
             if mq_cmd == "start" and not state_data.PD_ACTIVE:
