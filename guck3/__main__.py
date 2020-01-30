@@ -376,20 +376,22 @@ def get_status(state_data):
         ret += "\n------- Cameras -------"
         for c in state_data.CAMERADATA:
             cname, cframe, cfps, cisok, cactive, ctx = c
-            dt = time.time() - ctx
             if not cactive:
                 ctstatus0 = "DISABLED"
-            elif dt > 30 or not cisok:
-                ctstatus0 = "DOWN"
-            elif dt > 3:
-                ctstatus0 = "DELAYED"
+                ret += "\n" + cname + " " + ctstatus0
             else:
-                ctstatus0 = "running"
-            if ctstatus0 in ["DOWN", "DELAYED"]:
-                cam_crit = True
-            else:
-                cam_crit = False
-            ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
+                dt = time.time() - ctx
+                if dt > 30 or not cisok:
+                    ctstatus0 = "DOWN"
+                elif dt > 3:
+                    ctstatus0 = "DELAYED"
+                else:
+                    ctstatus0 = "running"
+                    if ctstatus0 in ["DOWN", "DELAYED"]:
+                        cam_crit = True
+                    else:
+                        cam_crit = False
+                ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
 
     ret += "\n------- System Summary -------"
     ret += "\nRAM: "
