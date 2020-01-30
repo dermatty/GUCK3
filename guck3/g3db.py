@@ -400,6 +400,8 @@ class RedisAPI:
             self.setp("g3_userdata_last_updated", 0)
         if not self.getp("g3_new_detections"):
             self.setp("g3_new_detections", 0)
+        if not self.getp("g3_hoststatus"):
+            self.setp("g3_hoststatus", None)
         self.copy_users_to_redis()
         self.copy_cameras_to_redis()
         self.setp("g3_putcmd", "")
@@ -417,6 +419,12 @@ class RedisAPI:
             return ret
         except Exception:
             return None
+
+    def set_host_status(self, status):
+        self.setp("g3_hoststatus", status)
+
+    def get_host_status(self):
+        return self.getp("g3_hoststatus")
 
     def set_putcmd(self, cmd):
         self.setp("g3_putcmd", cmd)

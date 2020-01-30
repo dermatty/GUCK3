@@ -4,6 +4,8 @@ import os
 import shutil
 import queue
 import json
+import subprocess
+import requests
 
 
 class ConfigReader:
@@ -228,3 +230,22 @@ def check_cfg_file(cfgfile):
         except Exception:
             return "error in cfg file [TELEGRAM][CHATIDS]!", False
     return "", True
+
+
+def get_external_ip(hostlist=[("WAN2TMO_DHCP", "raspisens"), ("WAN_DHCP", "etec")]):
+    procstr = 'curl https://api.ipdata.co/"$(dig +short myip.opendns.com @resolver1.opendns.com)"'
+    procstr += "?api-key=b8d4413e71b0e5827c4624c856f0439ee6b64ff8a71c419bfcd2d14c"
+
+    iplist = []
+    for gateway, hostn in hostlist:
+        try:
+            ssh = subprocess.Popen(["ssh", hostn, procstr], shell=False, stdout=subprocess.PIPE, stderr=subprocess. PIPE)
+            sshres = ssh.stdout.readlines()
+            s0 = ""
+            for ss in sshres:
+                s0 += ss.decode("utf-8")
+            d = json.loads(s0)
+            iplist.append((gateway, hostn, d["ip"], d["asn"]["name"]))
+        except Exception:
+            iplist.append((gateway, hostn, "N/A", "N/A"))
+    return iplist

@@ -545,6 +545,10 @@ def run():
             elif wf_cmd == "set_pdrestart":
                 state_data.WF_OUTQUEUE.put((state_data.PD_ACTIVE, None))
                 pd_cmd = "restart!!"
+            elif wf_cmd == "get_host_status":
+                ret, mem_crit, cpu_crit, gpu_crit, cam_crit = get_status(state_data)
+                state_data.WF_OUTQUEUE.put(("status", (ret, mem_crit, cpu_crit, gpu_crit, cam_crit)))
+
         except (queue.Empty, EOFError):
             pass
         except Exception:

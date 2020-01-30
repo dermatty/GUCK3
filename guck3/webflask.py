@@ -12,7 +12,7 @@ from guck3.mplogging import whoami
 from guck3.g3db import RedisAPI
 from guck3.camera import gen, Camera
 import time
-from guck3 import models, setup_dirs, check_cfg_file
+from guck3 import models, setup_dirs, check_cfg_file, get_external_ip
 from threading import Thread, Lock
 import logging
 import redis
@@ -117,6 +117,10 @@ class MainCommunicator(Thread):
                     elif pcmd == "pdstop":
                         self.outqueue.put(("set_pdstop", None))
                         cmd, data = self.inqueue.get()
+                    elif pcmd == "get_host_status":
+                        self.outqueue.put(("get_host_status", None))
+                        cmd, data = self.inqueue.get()
+                        self.red.set_host_status(data)
                     else:
                         self.outqueue.put(("get_pd_status", None))
                         cmd, data = self.inqueue.get()
@@ -292,6 +296,22 @@ def pdstop():
     RED.set_putcmd("pdstop")
     return render_template("stop.html")
 
+# -------------- status --------------
+@app.route("/status", methods=['GET', 'POST'])
+@flask_login.login_required
+def status():
+    RED.set_host_status(None)
+    RED.set_putcmd("get_host_status")
+    host_status = None
+    while not host_status:
+        host_status = RED.get_host_status()
+        if not host_status:
+            time.sleep(0.05)
+    statuslist, mem_crit, cpu_crit, gpu_crit, cam_crit = host_status
+    statuslist = statuslist.split("\n")
+    iplist = get_external_ip()
+    return render_template("status.html", statuslist=statuslist, iplist=iplist)
+
 # -------------- restart --------------
 @app.route("/pdrestart", methods=['GET', 'POST'])
 @flask_login.login_required
@@ -299,9 +319,7 @@ def restart():
     RED.set_putcmd("pdrestart")
     return render_template("restart.html")
 
-
 # -------------- detections --------------
-
 @app.route("/detections", methods=['GET', 'POST'])
 @flask_login.login_required
 def detections():
@@ -315,9 +333,7 @@ def detections():
         detlist.append(p1)
     return render_template('detections.html', detlist=detlist)
 
-
 # -------------- livecam --------------
-
 @app.route('/video_feed/<camnr>')
 def video_feed(camnr):
     return Response(gen(Camera(int(camnr)-1, RED)), mimetype='multipart/x-mixed-replace; boundary=frame')
