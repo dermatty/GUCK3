@@ -6,7 +6,7 @@ import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, nest
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -94,6 +94,13 @@ class SigHandler_g3:
         if self.state_data.KB and self.state_data.KB.active:
             self.state_data.KB.stop()
             self.state_data.KB.join()
+        mp_ns = self.state_data.mpp_nest
+        if mp_ns:
+            if mp_ns.pid:
+                print(trstr + "joining nest ...")
+                self.state_data.NS_OUTQUEUE.put("stop")
+                mp_ns.join()
+                print(self.get_trstr(exit_status) + "nest exited!")
         mp_pd = self.state_data.mpp_peopledetection
         if mp_pd:
             if mp_pd.pid:
@@ -152,10 +159,13 @@ class StateData:
         self.PD_ACTIVE = False
         self.mpp_peopledetection = None
         self.mpp_webflask = None
+        self.mpp_nest = None
         self.TG = None
         self.KB = None
         self.PD_INQUEUE = None
         self.PD_OUTQUEUE = None
+        self.NS_INQUEUE = None
+        self.NS_OUTQUEUE = None
         self.MAINQUEUE = None
         self.DIRS = None
         self.DO_RECORD = False
@@ -380,7 +390,10 @@ def get_status(state_data):
                 ctstatus0 = "DISABLED"
                 ret += "\n" + cname + " " + ctstatus0
             else:
-                dt = time.time() - ctx
+                try:
+                    dt = time.time() - ctx
+                except Exception:
+                    dt = 31
                 if dt > 30 or not cisok:
                     ctstatus0 = "DOWN"
                 elif dt > 3:
@@ -501,6 +514,8 @@ def run():
     state_data.MAINQUEUE = queue.Queue()
     state_data.WF_INQUEUE = mp.Queue()
     state_data.WF_OUTQUEUE = mp.Queue()
+    state_data.NS_INQUEUE = mp.Queue()
+    state_data.NS_OUTQUEUE = mp.Queue()
 
     # WebServer
     try:
@@ -525,13 +540,30 @@ def run():
     state_data.KB = KeyboardThread(state_data, cfgr, mp_loggerqueue, logger)
     state_data.KB.start()
 
+    # Nest
+    mpp_nest = mp.Process(target=nest.run_nest, args=(state_data.NS_INQUEUE, state_data.NS_OUTQUEUE, state_data.DIRS,
+                                                      cfg, mp_loggerqueue, ))
+    mpp_nest.start()
+    state_data.mpp_nest = mpp_nest
+
     commlist = [state_data.TG, state_data.KB]
 
     wf_msglist = []
     pd_cmd = None
 
     while not TERMINATED:
-        time.sleep(0.02)
+
+        # get from next
+        try:
+            state_data.NS_OUTQUEUE.put("get_status")
+            nest_status = state_data.NS_INQUEUE.get()
+            if nest_status:
+                logger.debug(whoami() + "received status")
+        except (queue.Empty, EOFError):
+            pass
+        except Exception:
+            pass
+
         # get from webflask queue
         try:
             wf_cmd, wf_data = state_data.WF_INQUEUE.get_nowait()
@@ -550,7 +582,6 @@ def run():
             elif wf_cmd == "get_host_status":
                 ret, mem_crit, cpu_crit, gpu_crit, cam_crit = get_status(state_data)
                 state_data.WF_OUTQUEUE.put(("status", (ret, mem_crit, cpu_crit, gpu_crit, cam_crit)))
-
         except (queue.Empty, EOFError):
             pass
         except Exception:
@@ -594,6 +625,7 @@ def run():
             mq_param = None
             if not pd_cmd:
                 mq_cmd, mq_param = state_data.MAINQUEUE.get_nowait()
+                print(mq_cmd)
             else:
                 if pd_cmd == "start":
                     mq_cmd = "start"
