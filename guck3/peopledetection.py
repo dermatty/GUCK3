@@ -321,7 +321,8 @@ class Camera(Thread):
 
 def shutdown_cams(cameras):
     for c in cameras:
-        c.stop()
+        if c.active:
+            c.stop()
 
 
 def startup_cams(cameras):

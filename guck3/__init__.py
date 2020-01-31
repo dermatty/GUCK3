@@ -249,3 +249,23 @@ def get_external_ip(hostlist=[("WAN2TMO_DHCP", "raspisens"), ("WAN_DHCP", "etec"
         except Exception:
             iplist.append((gateway, hostn, "N/A", "N/A"))
     return iplist
+
+
+def get_sens_temp(hostn="raspisens", filen="/home/pi/sens.txt"):
+    procstr = "cat " + filen
+    ssh = subprocess.Popen(["ssh", hostn, procstr], shell=False, stdout=subprocess.PIPE, stderr=subprocess. PIPE)
+    sshres = ssh.stdout.readlines()
+    n = 0
+    temp = 0
+    hum = 0
+    for s in sshres:
+        s0 = s.decode("utf-8").split(" ")
+        temp += float(s0[2])
+        hum += float(s0[3])
+        n += 1
+    if n > 0:
+        temp = temp / n
+        hum = hum / n
+    return temp, hum
+
+

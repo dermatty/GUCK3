@@ -12,7 +12,7 @@ from guck3.mplogging import whoami
 from guck3.g3db import RedisAPI
 from guck3.camera import gen, Camera
 import time
-from guck3 import models, setup_dirs, check_cfg_file, get_external_ip
+from guck3 import models, setup_dirs, check_cfg_file, get_external_ip, get_sens_temp
 from threading import Thread, Lock
 import logging
 import redis
@@ -310,7 +310,8 @@ def status():
     statuslist, mem_crit, cpu_crit, gpu_crit, cam_crit = host_status
     statuslist = statuslist.split("\n")
     iplist = get_external_ip()
-    return render_template("status.html", statuslist=statuslist, iplist=iplist)
+    temp, hum = get_sens_temp()
+    return render_template("status.html", statuslist=statuslist, iplist=iplist, temp=round(temp, 1), hum=round(hum, 1))
 
 # -------------- restart --------------
 @app.route("/pdrestart", methods=['GET', 'POST'])
