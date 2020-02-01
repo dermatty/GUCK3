@@ -6,7 +6,7 @@ import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, nest
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, nest, get_sens_temp, get_external_ip
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -200,6 +200,9 @@ class KeyboardThread(Thread):
             return
         print(txt)
 
+    def send_photo(self, photopath):
+        pass
+
     def stop(self):
         if not self.active:
             return
@@ -274,6 +277,15 @@ class TelegramThread:
         for c in self.chatids:
             try:
                 self.bot.send_message(chat_id=c, text=text)
+            except Exception as e:
+                self.logger.warning(whoami() + str(e) + ": chat_id " + str(c))
+
+    def send_photo(self, photopath):
+        if not self.active:
+            return
+        for c in self.chatids:
+            try:
+                self.bot.send_photo(chat_id=c, photo=open(photopath, "rb"))
             except Exception as e:
                 self.logger.warning(whoami() + str(e) + ": chat_id " + str(c))
 
@@ -406,6 +418,15 @@ def get_status(state_data):
                         cam_crit = False
                 ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
 
+    temp, hum = get_sens_temp()
+    ret += "\n------- Sensors -------"
+    ret += "\nTemperature:  " + "%.1f" % temp + "C"
+    ret += "\nHumidity: " + "%.1f" % hum + "%"
+    iplist = get_external_ip()
+    ret += "\n------- Internet -------"
+    for ip_gw, _, ip_ip, ip_asn in iplist:
+        ret += "\n" + ip_gw + ": "
+        ret += "\n" + "--> " + ip_ip + " / " + ip_asn
     ret += "\n------- System Summary -------"
     ret += "\nRAM: "
     ret += "CRITICAL!" if mem_crit else "OK!"
@@ -540,12 +561,15 @@ def run():
     state_data.KB = KeyboardThread(state_data, cfgr, mp_loggerqueue, logger)
     state_data.KB.start()
 
-    # Nest
-    mpp_nest = mp.Process(target=nest.run_nest, args=(state_data.NS_INQUEUE, state_data.NS_OUTQUEUE, state_data.DIRS,
-                                                      cfg, mp_loggerqueue, ))
-    mpp_nest.start()
-    state_data.mpp_nest = mpp_nest
+    # Nest, start only when telegram active
+    if state_data.TG.active:
+        mpp_nest = mp.Process(target=nest.run_nest, args=(state_data.NS_INQUEUE, state_data.NS_OUTQUEUE, state_data.DIRS,
+                                                          cfg, mp_loggerqueue, ))
+        mpp_nest.start()
+        state_data.mpp_nest = mpp_nest
+    else:
 
+        state_data.mpp_nest = None
     commlist = [state_data.TG, state_data.KB]
 
     wf_msglist = []
@@ -553,16 +577,18 @@ def run():
 
     while not TERMINATED:
 
-        # get from next
-        try:
-            state_data.NS_OUTQUEUE.put("get_status")
-            nest_status = state_data.NS_INQUEUE.get()
-            if nest_status:
-                logger.debug(whoami() + "received status")
-        except (queue.Empty, EOFError):
-            pass
-        except Exception:
-            pass
+        # get from nest
+        if state_data.mpp_nest:
+            try:
+                state_data.NS_OUTQUEUE.put("get_status")
+                nest_status = state_data.NS_INQUEUE.get()
+                if nest_status:
+
+                    logger.debug(whoami() + "received status")
+            except (queue.Empty, EOFError):
+                pass
+            except Exception:
+                pass
 
         # get from webflask queue
         try:
@@ -611,6 +637,8 @@ def run():
                     wf_msglist.insert(0, photo_name)
                     try:
                         cv2.imwrite(photo_name, c_frame)
+                        for c in commlist:
+                            c.send_photo(photo_name)
                         if addtl_photo_path:
                             photo_name2 = addtl_photo_path + c_cname + "_" + datestr + ".jpg"
                             cv2.imwrite(photo_name2, c_frame)

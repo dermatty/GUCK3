@@ -309,9 +309,7 @@ def status():
             time.sleep(0.05)
     statuslist, mem_crit, cpu_crit, gpu_crit, cam_crit = host_status
     statuslist = statuslist.split("\n")
-    iplist = get_external_ip()
-    temp, hum = get_sens_temp()
-    return render_template("status.html", statuslist=statuslist, iplist=iplist, temp=round(temp, 1), hum=round(hum, 1))
+    return render_template("status.html", statuslist=statuslist)
 
 # -------------- restart --------------
 @app.route("/pdrestart", methods=['GET', 'POST'])
