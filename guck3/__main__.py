@@ -567,8 +567,11 @@ def run():
                                                           cfg, mp_loggerqueue, ))
         mpp_nest.start()
         state_data.mpp_nest = mpp_nest
+        if state_data.NS_INQUEUE.get() != "OK":
+            mpp_nest = None
+            state_data.mpp_nest = mpp_nest
+            logger.warning(whoami() + "error in nest config, disabling nest ...")
     else:
-
         state_data.mpp_nest = None
     commlist = [state_data.TG, state_data.KB]
 

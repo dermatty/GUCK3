@@ -1,5 +1,5 @@
 import os
-import logging
+import sys
 import signal
 import queue
 import sseclient   # Achtung: sseclient-py !!!
@@ -10,10 +10,9 @@ import certifi
 from threading import Thread, Lock
 import json
 import time
-import signal
 from setproctitle import setproctitle
 from guck3.mplogging import whoami
-from guck3 import mplogging, mpcam, clear_all_queues, ConfigReader
+from guck3 import mplogging, clear_all_queues
 
 TERMINATED = False
 
@@ -251,11 +250,17 @@ def run_nest(ns_outqueue, ns_inqueue, dirs, cfg, mp_loggerqueue):
     signal.signal(signal.SIGINT, sh.sighandler_ns)
     signal.signal(signal.SIGTERM, sh.sighandler_ns)
 
-    nest_token = cfg["NEST"]["TOKEN"]
-    nest_api_url = "https://developer-api.nest.com"
-    nest = Nest_sse(nest_token, nest_api_url, "STATUS", logger)
+    try:
+        nest_token = cfg["NEST"]["TOKEN"]
+        nest_api_url = "https://developer-api.nest.com"
+        nest = Nest_sse(nest_token, nest_api_url, "STATUS", logger)
+        nest.start()
+    except Exception:
+        logger.error(whoami() + "cannot start nest, exiting ...")
+        ns_outqueue.put("NOOK")
+        sys.exit()
 
-    nest.start()
+    ns_outqueue.put("OK")
 
     while not TERMINATED:
         time.sleep(0.02)
@@ -265,7 +270,6 @@ def run_nest(ns_outqueue, ns_inqueue, dirs, cfg, mp_loggerqueue):
                 break
             elif cmd == "get_status":
                 nest_status = nest.fetch()
-                print(nest_status)
                 ns_outqueue.put(nest_status)
         except (queue.Empty, EOFError):
             continue
@@ -274,34 +278,3 @@ def run_nest(ns_outqueue, ns_inqueue, dirs, cfg, mp_loggerqueue):
 
     clear_all_queues([ns_inqueue, ns_outqueue])
     logger.info(whoami() + "... exited!")
-    
-
-'''if __name__ == "__channelexec__":
-
-    GUCK_HOME = os.environ["GUCK_HOME"]
-    ln = "nestthread"
-    logger = logging.getLogger(ln)
-    logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(GUCK_HOME + "log/" + ln + ".log", mode="w")
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    CONNECTOR_AUX = zenzlib.Connector()
-
-    token, api_url, msg = dill.loads(channel.receive())
-    logger.info("Received NEST data")
-    NESTSS = Nest_sse(token, api_url, msg)
-    NESTSS.start()
-    if NESTSS.STATUS == -2:
-        channel.send(dill.dumps("NOOK"))
-    else:
-        channel.send(dill.dumps("OK"))
-    while NESTSS.STATUS != -2:
-        if time.time() - NESTSS.LASTKEEPALIVE > 120:
-            ret0 = dill.dumps("NOOK")
-        else:
-            ret0 = dill.dumps("OK")
-        channel.send(ret0)
-        time.sleep(1)
-    channel.send("NOOK")'''
