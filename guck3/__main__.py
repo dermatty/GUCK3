@@ -583,7 +583,6 @@ def run():
                 state_data.NS_OUTQUEUE.put("get_status")
                 nest_status = state_data.NS_INQUEUE.get()
                 if nest_status:
-
                     logger.debug(whoami() + "received status")
             except (queue.Empty, EOFError):
                 pass

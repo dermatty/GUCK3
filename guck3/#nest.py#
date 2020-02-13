@@ -265,7 +265,6 @@ def run_nest(ns_outqueue, ns_inqueue, dirs, cfg, mp_loggerqueue):
                 break
             elif cmd == "get_status":
                 nest_status = nest.fetch()
-                print(nest_status)
                 ns_outqueue.put(nest_status)
         except (queue.Empty, EOFError):
             continue
