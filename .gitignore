@@ -105,3 +105,4 @@ venv.bak/
 
 # flask
 flask_session/
+.jpg
