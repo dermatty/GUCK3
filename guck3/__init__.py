@@ -70,7 +70,7 @@ def setup_dirs():
     install_dir = os.path.dirname(os.path.realpath(__file__))
     userhome = expanduser("~")
     maindir = userhome + "/.guck3/"
-    logsdir = maindir + "logs/"
+    logsdir = "/media/cifs/dokumente/g3logs/"
     videodir = maindir + "video/"
     photodir = maindir + "photo/"
     dirs = {

@@ -208,9 +208,11 @@ class Camera(Thread):
         return self.mpp
 
     def stop(self):
+        self.logger.debug(whoami() + "setting stop for " + self.cname)
         self.running = False
         while not self.shutdown_completed:
             time.sleep(0.1)
+        self.logger.debug(whoami() + "shutdown completed for " + self.cname)
 
     def run(self):
         if not self.active or not self.isok:

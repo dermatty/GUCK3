@@ -9,6 +9,7 @@ import sys
 import inspect
 
 CNAME = None
+CVMAJOR = "4"
 
 
 def whoami():
@@ -116,7 +117,10 @@ class NewMatcher:
             fggray = cv2.medianBlur(fggray, 5)
             edged = auto_canny(fggray)
             closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, self.KERNEL2)
-            cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if CVMAJOR == "4":
+                cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            else:
+                _, cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cnts0 = [cv2.boundingRect(c) for c in cnts]
             rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
             return ret, rects, frame
@@ -126,6 +130,9 @@ class NewMatcher:
 
 def run_cam(cfg, child_pipe, mp_loggerqueue):
     global CNAME
+    global CVMAJOR
+
+    CVMAJOR = cv2.__version__.split(".")[0]
     CNAME = cfg["name"]
 
     setproctitle("g3." + cfg["name"] + "_" + os.path.basename(__file__))

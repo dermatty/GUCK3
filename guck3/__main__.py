@@ -6,7 +6,7 @@ import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, nest, get_sens_temp, get_external_ip
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, get_sens_temp, get_external_ip
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -78,7 +78,9 @@ class SigHandler_g3:
         self.old_sys_stdout = old_sys_stdout
 
     def sighandler_g3(self, a, b):
-        self.shutdown(exit_status=1)
+        global TERMINATED
+        TERMINATED = True
+        # self.shutdown(exit_status=1)
 
     def get_trstr(self, exit_status):
         if exit_status == 3:
@@ -94,13 +96,6 @@ class SigHandler_g3:
         if self.state_data.KB and self.state_data.KB.active:
             self.state_data.KB.stop()
             self.state_data.KB.join()
-        mp_ns = self.state_data.mpp_nest
-        if mp_ns:
-            if mp_ns.pid:
-                print(trstr + "joining nest ...")
-                self.state_data.NS_OUTQUEUE.put("stop")
-                mp_ns.join()
-                print(self.get_trstr(exit_status) + "nest exited!")
         mp_pd = self.state_data.mpp_peopledetection
         if mp_pd:
             if mp_pd.pid:
@@ -152,6 +147,8 @@ def input_to(fn, timeout, queue):
     except TimeoutError:
         signal.alarm(0)
         queue.put(None)
+    except Exception:
+        pass
 
 
 class StateData:
@@ -159,7 +156,6 @@ class StateData:
         self.PD_ACTIVE = False
         self.mpp_peopledetection = None
         self.mpp_webflask = None
-        self.mpp_nest = None
         self.TG = None
         self.KB = None
         self.PD_INQUEUE = None
@@ -422,11 +418,6 @@ def get_status(state_data):
     ret += "\n------- Sensors -------"
     ret += "\nTemperature:  " + "%.1f" % temp + "C"
     ret += "\nHumidity: " + "%.1f" % hum + "%"
-    iplist = get_external_ip()
-    ret += "\n------- Internet -------"
-    for ip_gw, _, ip_ip, ip_asn in iplist:
-        ret += "\n" + ip_gw + ": "
-        ret += "\n" + "--> " + ip_ip + " / " + ip_asn
     ret += "\n------- System Summary -------"
     ret += "\nRAM: "
     ret += "CRITICAL!" if mem_crit else "OK!"
@@ -442,7 +433,7 @@ def get_status(state_data):
     return ret, mem_crit, cpu_crit, gpu_crit, cam_crit
 
 
-def run():
+def run(startmode="systemd"):
     global TERMINATED
     global RESTART
 
@@ -508,10 +499,12 @@ def run():
     state_data.DIRS = dirs
 
     # init logger
+    print(dirs["logs"] + "g3.log")
     mp_loggerqueue, mp_loglistener = mplogging.start_logging_listener(dirs["logs"] + "g3.log", maxlevel=loglevel)
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.debug(whoami() + "starting with loglevel '" + loglevel_str + "'")
     logger.info(whoami() + "Welcome to GUCK3 " + os.environ["GUCK3_VERSION"])
+    logger.info(whoami() + "started with startmode " + startmode)
 
     # sighandler
     sh = SigHandler_g3(mp_loggerqueue, mp_loglistener, state_data, old_sys_stdout, logger)
@@ -553,44 +546,26 @@ def run():
         sh.shutdown()
         return -1
 
+    commlist = []
     # Telegram
     state_data.TG = TelegramThread(state_data, cfgr, mp_loggerqueue, logger)
     state_data.TG.start()
+    commlist.append(state_data.TG)
 
     # KeyboardThread
-    state_data.KB = KeyboardThread(state_data, cfgr, mp_loggerqueue, logger)
-    state_data.KB.start()
-
-    # Nest, start only when telegram active
-    if state_data.TG.active:
-        mpp_nest = mp.Process(target=nest.run_nest, args=(state_data.NS_INQUEUE, state_data.NS_OUTQUEUE, state_data.DIRS,
-                                                          cfg, mp_loggerqueue, ))
-        mpp_nest.start()
-        state_data.mpp_nest = mpp_nest
-        if state_data.NS_INQUEUE.get() != "OK":
-            mpp_nest = None
-            state_data.mpp_nest = mpp_nest
-            logger.warning(whoami() + "error in nest config, disabling nest ...")
+    if startmode != "systemd":
+        state_data.KB = KeyboardThread(state_data, cfgr, mp_loggerqueue, logger)
+        state_data.KB.start()
+        commlist.append(state_data.KB)
     else:
-        state_data.mpp_nest = None
-    commlist = [state_data.TG, state_data.KB]
+        state_data.KB = None
 
     wf_msglist = []
     pd_cmd = None
 
     while not TERMINATED:
 
-        # get from nest
-        if state_data.mpp_nest:
-            try:
-                state_data.NS_OUTQUEUE.put("get_status")
-                nest_status = state_data.NS_INQUEUE.get()
-                if nest_status:
-                    logger.debug(whoami() + "received status")
-            except (queue.Empty, EOFError):
-                pass
-            except Exception:
-                pass
+        time.sleep(0.05)
 
         # get from webflask queue
         try:
@@ -630,13 +605,17 @@ def run():
                 c_cname, c_frame, _, _, _, _ = pdpar
                 state_data.CAMERADATA.append(pdpar)
                 if pdmsg == "detection":
-                    for c in commlist:
-                        c.send_message_all(str(datetime.datetime.now()) + ": Human detected @ camera " + c_cname + "!")
-                    # save photo
-                    datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
-                    short_photo_name = c_cname + "_" + datestr + ".jpg"
-                    photo_name = dirs["photo"] + short_photo_name
-                    wf_msglist.insert(0, photo_name)
+                    try:
+                        logger.info(whoami() + "received detection for " + c_cname)
+                        for c in commlist:
+                            c.send_message_all(str(datetime.datetime.now()) + ": Human detected @ camera " + c_cname + "!")
+                        # save photo
+                        datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
+                        short_photo_name = c_cname + "_" + datestr + ".jpg"
+                        photo_name = dirs["photo"] + short_photo_name
+                        wf_msglist.insert(0, photo_name)
+                    except Exception as e:
+                        logger.warning(whoami() + str(e))
                     try:
                         cv2.imwrite(photo_name, c_frame)
                         for c in commlist:
@@ -718,7 +697,9 @@ def run():
     if RESTART:
         exitcode = 3
     # close all the other mps & stuff
+    logger.info(whoami() + "calling shutdown sequence ...")
     sh.shutdown(exitcode)
+    print("... shutdown sequence finished!")
 
     if sys.stdout != old_sys_stdout:
         sys.stdout = old_sys_stdout

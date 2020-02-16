@@ -552,7 +552,7 @@ class RedisAPI:
         photodata = self.getp("g3_photodata")
         for p in photonames:
             photodata.insert(0, p)
-            if len(photodata) > 15:
+            if len(photodata) > 50:
                 del photodata[-1]
         self.setp("g3_photodata", photodata)
 

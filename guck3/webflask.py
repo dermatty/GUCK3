@@ -105,6 +105,7 @@ class MainCommunicator(Thread):
         self.pd_active = "N/A"
         self.last_sse_published = 0
         while True:
+            time.sleep(0.5)
             try:
                 with self.lock:
                     pcmd = self.red.get_putcmd()
@@ -141,7 +142,6 @@ class MainCommunicator(Thread):
                 self.pd_active = cmd
                 self.no_detections += new_detections
                 self.sse_publish()
-            time.sleep(0.5)
 
 
 # -------------- Login Manager --------------
@@ -328,8 +328,11 @@ def detections():
     detlist = []
     for p in RED.get_photodata():
         p1 = os.path.basename(p)
-        shutil.copy(p, "./guck3/static/" + p1)
-        detlist.append(p1)
+        try:
+            shutil.copy(p, "./guck3/static/" + p1)
+            detlist.append(p1)
+        except Exception:
+            pass
     return render_template('detections.html', detlist=detlist)
 
 # -------------- livecam --------------
@@ -349,23 +352,24 @@ def livecam(camnrstr=0, ptz=0):
         cameradata = RED.get_cameras()
         cameralist = [(cd["name"], cd["photo_url"], cd["stream_url"]) for cd in cameradata]
         if ptz0 != 0 and len(cameralist)-1 >= camnr:
-            ptzlist = [(cd["ptz_up_url"], cd["ptz_down_url"], cd["ptz_left_url"], cd["ptz_right_url"])
+            ptzlist = [(cd["ptz_up_url"], cd["ptz_down_url"], cd["ptz_left_url"], cd["ptz_right_url"], cd["ptz_mode"])
                        for cd in cameradata]
-            ptz_up, ptz_down, ptz_left, ptz_right = ptzlist[camnr]
-            ptzcommand = ""
-            if ptz0 == 1:
-                ptzcommand = ptz_up
-            elif ptz0 == 2:
-                ptzcommand = ptz_down
-            elif ptz0 == 3:
-                ptzcommand = ptz_left
-            elif ptz0 == 4:
-                ptzcommand = ptz_right
-            if ptzcommand != "":
-                try:
-                    requests.get(ptzcommand)
-                except Exception:
-                    pass
+            ptz_up, ptz_down, ptz_left, ptz_right, ptzmode = ptzlist[camnr]
+            if ptzmode.lower() != "none":
+                ptzcommand = ""
+                if ptz0 == 1:
+                    ptzcommand = ptz_up
+                elif ptz0 == 2:
+                    ptzcommand = ptz_down
+                elif ptz0 == 3:
+                    ptzcommand = ptz_left
+                elif ptz0 == 4:
+                    ptzcommand = ptz_right
+                if ptzcommand != "":
+                    try:
+                        requests.get(ptzcommand)
+                    except Exception as e:
+                        app.logger.warning(whoami() + str(e))
         return render_template("livecam.html", cameralist=cameralist, camnr=camnr+1, ptz=0)
     elif request.method == "POST":
         pass
@@ -424,7 +428,7 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
     maincomm.start()
 
     options = {
-        'bind': '%s:%s' % ('127.0.0.1', '8080'),
+        'bind': '%s:%s' % ('0.0.0.0', '8000'),
         'capture_output': True,
         'debug': True,
         'graceful_timeout': 10,
