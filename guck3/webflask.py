@@ -427,15 +427,26 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
     maincomm = MainCommunicator(inqueue, outqueue, app, RED)
     maincomm.start()
 
-    options = {
-        'bind': '%s:%s' % ('0.0.0.0', '8000'),
-        'certfile': '/home/stephan/certs/untergrabner_spdns_org/untergrabner.spdns.org.crt',
-        'keyfile': '/home/stephan/certs/untergrabner_spdns_org/untergrabner.spdns.org.key',
-        'capture_output': True,
-        'debug': True,
-        'graceful_timeout': 10,
-        'workers': number_of_workers(),
-    }
+    try:
+        certfile = cfg["OPTIONS"]["CERTFILE"]
+        keyfile = cfg["OPTIONS"]["KEYFILE"]
+        options = {
+            'bind': '%s:%s' % ('0.0.0.0', '8000'),
+            'certfile': certfile,
+            'keyfile': keyfile,
+            'capture_output': True,
+            'debug': True,
+            'graceful_timeout': 10,
+            'workers': 4
+        }
+    except Exception:
+        options = {
+            'bind': '%s:%s' % ('0.0.0.0', '8000'),
+            'capture_output': True,
+            'debug': True,
+            'graceful_timeout': 10,
+            'workers': 4
+        }
     signal.signal(signal.SIGFPE, sighandler)     # nicht die feine englische / faut de mieux
     StandaloneApplication(app, options).run()
 
