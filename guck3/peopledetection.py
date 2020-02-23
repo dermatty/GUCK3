@@ -434,7 +434,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
                             cv2.imshow(c.cname, c.frame)
                         c.write_record()
                         new_detections = c.get_new_detections()
-                        if new_detections and time.time() - lastdetection_tt > 2.5:
+                        if new_detections and time.time() - lastdetection_tt > 3:
                             lastdetection_tt = time.time()
                             mainmsg = "detection"
                         c.clear_new_detections()
