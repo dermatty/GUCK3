@@ -35,14 +35,14 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
 
     if msg == "start":
         state_data.MAINQUEUE.put(("start", bot0))
-        reply = "starting GUCK3 alarm system"
+        reply = "starting GUCK3 people detection ..."
     elif msg == "stop":
         if state_data.mpp_peopledetection:
             if state_data.mpp_peopledetection.pid:
                 state_data.MAINQUEUE.put(("stop", None))
-                reply = "stopping GUCK3 alarm system"
+                reply = "stopping GUCK3 people detection ..."
         else:
-            reply = "GUCK3 alarm system is NOT running, cannot stop!"
+            reply = "GUCK3 people detection is NOT running, cannot stop!"
     elif msg == "exit!!" or msg == "restart!!":
         if msg == "restart!!":
             reply = "restarting GUCK3!"
@@ -51,7 +51,7 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
         state_data.MAINQUEUE.put((msg, None))
     elif msg.replace(" ", "") == "recordon" and not state_data.DO_RECORD:
         if not state_data.PD_ACTIVE:
-            reply = "PeopleDetector no running, cannot start recording"
+            reply = "People Detection no running, cannot start recording"
         else:
             state_data.PD_OUTQUEUE.put(("record on", None))
             state_data.DO_RECORD = True
@@ -565,7 +565,7 @@ def run(startmode="systemd"):
 
     while not TERMINATED:
 
-        time.sleep(0.05)
+        time.sleep(0.02)
 
         # get from webflask queue
         try:
@@ -599,6 +599,7 @@ def run(startmode="systemd"):
                 break
             except Exception:
                 break
+
         if pdmsglist:
             state_data.CAMERADATA = []
             for pdmsg, pdpar in pdmsglist:
@@ -608,7 +609,7 @@ def run(startmode="systemd"):
                     try:
                         logger.info(whoami() + "received detection for " + c_cname)
                         for c in commlist:
-                            c.send_message_all(str(datetime.datetime.now()) + ": Human detected @ camera " + c_cname + "!")
+                            c.send_message_all(time.strftime("%d-%m-%Y %H:%M:%S") + ": Human detected @ " + c_cname + "!")
                         # save photo
                         datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
                         short_photo_name = c_cname + "_" + datestr + ".jpg"
@@ -659,9 +660,13 @@ def run(startmode="systemd"):
                         state_data.PD_ACTIVE = False
                         logger.error(whoami() + ": cameras/PD startup failed!")
                         state_data.mpp_peopledetection.join()
+                        for c in commlist:
+                            c.send_message_all("Error - cannot start GUCK3 people detection!")
                     else:
                         logger.info(whoami() + "cameras/PD started!")
                         state_data.PD_ACTIVE = True
+                        for c in commlist:
+                            c.send_message_all("... GUCK3 people detection started!")
                 except Exception as e:
                     logger.error(whoami() + str(e) + ": cannot communicate with peopledetection, trying to exit!")
                     state_data.PD_ACTIVE = False
@@ -673,10 +678,11 @@ def run(startmode="systemd"):
                     TERMINATED = True
             elif mq_cmd == "stop":
                 if state_data.mpp_peopledetection:
-                    print("STOPPING ....")
                     if state_data.mpp_peopledetection.pid:
                         state_data.PD_OUTQUEUE.put(("stop", None))
                         state_data.mpp_peopledetection.join()
+                        for c in commlist:
+                            c.send_message_all("... GUCK3 people detection stopped!")
                     state_data.PD_ACTIVE = False
             elif mq_cmd == "exit!!" or mq_cmd == "restart!!":
                 if mq_cmd == "restart!!":

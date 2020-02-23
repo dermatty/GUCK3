@@ -122,6 +122,7 @@ class Camera(Thread):
         self.cnn_classified_list = []
         self.fpslist = []
         self.lock = Lock()
+        self.startup_completed = False
 
         self.logger = logger
         self.mp_loggerqueue = mp_loggerqueue
@@ -208,6 +209,9 @@ class Camera(Thread):
         return self.mpp
 
     def stop(self):
+        if not self.active or not self.isok or not self.mpp:
+            self.logger.warning(whoami() + self.cname + " was not running, exiting thread!")
+            return
         self.logger.debug(whoami() + "setting stop for " + self.cname)
         self.running = False
         while not self.shutdown_completed:
@@ -216,9 +220,11 @@ class Camera(Thread):
 
     def run(self):
         if not self.active or not self.isok:
+            self.startup_completed = True
             return
         self.startup_cam()
-        if not self.isok or not self.active:
+        self.startup_completed = True
+        if not self.isok or not self.active or not self.mpp:
             return
         self.running = True
         while self.running and self.isok and self.active:
@@ -330,6 +336,10 @@ def shutdown_cams(cameras):
 def startup_cams(cameras):
     for c in cameras:
         c.start()
+        while not c.startup_completed:
+            time.sleep(0.05)
+        if not c.mpp:
+            c.join(timeout=3)
 
 
 def stop_cams(cameras):
@@ -407,7 +417,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     lastdetection_tt = 0
     while not TERMINATED:
 
-        time.sleep(0.04)
+        time.sleep(0.02)
 
         mainmsglist = []
 

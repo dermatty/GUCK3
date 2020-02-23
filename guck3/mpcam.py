@@ -109,18 +109,18 @@ class NewMatcher:
 
     def get_caption_and_process(self):
         if not self.CAP:
-            self.CAP = cv2.VideoCapture(self.SURL)
+            self.CAP = cv2.VideoCapture(self.SURL, cv2.CAP_FFMPEG)
         ret, frame = self.CAP.read()
         if ret:
-            gray = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             fggray = self.FGBG.apply(gray, 1 / self.HIST)
             fggray = cv2.medianBlur(fggray, 5)
             edged = auto_canny(fggray)
             closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, self.KERNEL2)
             if CVMAJOR == "4":
-                cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             else:
-                _, cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                _, cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cnts0 = [cv2.boundingRect(c) for c in cnts]
             rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
             return ret, rects, frame
@@ -131,6 +131,8 @@ class NewMatcher:
 def run_cam(cfg, child_pipe, mp_loggerqueue):
     global CNAME
     global CVMAJOR
+
+    cv2.setNumThreads(1)
 
     CVMAJOR = cv2.__version__.split(".")[0]
     CNAME = cfg["name"]

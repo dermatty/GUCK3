@@ -327,8 +327,8 @@ def detections():
         os.remove("./guck3/static/" + f)
     detlist = []
     for p in RED.get_photodata():
-        p1 = os.path.basename(p)
         try:
+            p1 = os.path.basename(p)
             shutil.copy(p, "./guck3/static/" + p1)
             detlist.append(p1)
         except Exception:
@@ -429,6 +429,8 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
 
     options = {
         'bind': '%s:%s' % ('0.0.0.0', '8000'),
+        'certfile': '/home/stephan/certs/untergrabner_spdns_org/untergrabner.spdns.org.crt',
+        'keyfile': '/home/stephan/certs/untergrabner_spdns_org/untergrabner.spdns.org.key',
         'capture_output': True,
         'debug': True,
         'graceful_timeout': 10,
