@@ -437,16 +437,20 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
             'capture_output': True,
             'debug': True,
             'graceful_timeout': 10,
-            'workers': 4
+            'worker_class': 'gevent',
+            'workers': number_of_workers()
         }
+        app.logger.info(whoami() + ": binding gunicorn to https!")
     except Exception:
         options = {
             'bind': '%s:%s' % ('0.0.0.0', '8000'),
             'capture_output': True,
             'debug': True,
             'graceful_timeout': 10,
-            'workers': 4
+            'worker_class': 'gevent',
+            'workers': number_of_workers()
         }
+        app.logger.warning(whoami() + ": binding gunicorn to http!")
     signal.signal(signal.SIGFPE, sighandler)     # nicht die feine englische / faut de mieux
     StandaloneApplication(app, options).run()
 

@@ -81,10 +81,15 @@ class Camera(BaseCamera):
     @staticmethod
     def frames():
         try:
-            camera = cv2.VideoCapture(Camera.surl)
+            camera = cv2.VideoCapture(Camera.surl, cv2.CAP_FFMPEG)
+            camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             while True:
-                _, img = camera.read()
-                yield cv2.imencode('.jpg', img)[1].tobytes()
+                ret, img = camera.read()
+                if ret:
+                    yield cv2.imencode('.jpg', img)[1].tobytes()
+                else:
+                    camera = cv2.VideoCapture(Camera.surl, cv2.CAP_FFMPEG)
+                    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:
             pass
 

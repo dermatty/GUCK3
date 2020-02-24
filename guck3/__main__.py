@@ -681,6 +681,7 @@ def run(startmode="systemd"):
                     if state_data.mpp_peopledetection.pid:
                         state_data.PD_OUTQUEUE.put(("stop", None))
                         state_data.mpp_peopledetection.join()
+                        state_data.mpp_peopledetection = None
                         for c in commlist:
                             c.send_message_all("... GUCK3 people detection stopped!")
                     state_data.PD_ACTIVE = False
