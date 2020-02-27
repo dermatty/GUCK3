@@ -162,31 +162,40 @@ class Camera(Thread):
                     del self.fpslist[0]
         return fps
 
-    def shutdown(self, iserror=False):
-        self.stop_cam()
+    def shutdown(self):
+        self.logger.debug(whoami() + "camera " + self.cname + " starting shutdown initialize")
+        if self.outvideo:
+            self.outvideo.release()
+            self.logger.debug(whoami() + "camera " + self.cname + " recording stopped")
+        try:
+            self.parent_pipe.send("stop")
+            t0 = time.time()
+            polled = False
+            while not polled and time.time() - t0 < 10:
+                polled = self.parent_pipe.poll()
+                time.sleep(0.05)
+            if polled:
+                ret, _ = self.parent_pipe.recv()
+                self.mpp.join(5)
+                if self.mpp.is_alive():
+                    os.kill(self.mpp.pid, signal.SIGKILL)
+            else:
+                if self.mpp:
+                    if self.mpp.is_alive():
+                        os.kill(self.mpp.pid, signal.SIGKILL)
+        except Exception:
+            if self.mpp:
+                if self.mpp.is_alive():
+                    os.kill(self.mpp.pid, signal.SIGKILL)
+        self.mpp = None
+        self.logger.debug(whoami() + "camera " + self.cname + " mpp stopped!")
         try:
             cv2.destroyWindow(self.cname)
         except Exception:
             pass
         self.stop_recording()
-        if iserror:
-            self.active = False
-            self.isok = False
         self.frame = None
-
-    def stop_cam(self):
-        if self.outvideo:
-            self.outvideo.release()
-            self.logger.debug(whoami() + "camera " + self.cname + " recording stopped")
-        if not self.active or not self.isok:
-            return 1
-        self.parent_pipe.send("stop")
-        ret, _ = self.parent_pipe.recv()
-        self.mpp.join(5)
-        if self.mpp.is_alive():
-            os.kill(self.mpp.pid, signal.SIGKILL)
-        self.mpp = None
-        self.logger.debug(whoami() + "camera " + self.cname + " stopped!")
+        self.logger.debug(whoami() + "camera " + self.cname + " shutdown finished!")
         return 1
 
     def startup_cam(self):
@@ -209,14 +218,21 @@ class Camera(Thread):
         return self.mpp
 
     def stop(self):
-        if not self.active or not self.isok or not self.mpp:
-            self.logger.warning(whoami() + self.cname + " was not running, exiting thread!")
-            return
+        if self.shutdown_completed and not self.mpp:
+            self.logger.warning(whoami() + self.cname + " shutdown already completed, exiting ...")
+            return 1
+        elif self.shutdown_completed and self.mpp:
+            self.logger.warning(whoami() + self.cname + " shutdown only half completed, aborting !!!")
+            return -1
         self.logger.debug(whoami() + "setting stop for " + self.cname)
         self.running = False
-        while not self.shutdown_completed:
+        t0 = time.time()
+        while not self.shutdown_completed and time.time() - t0 < 10:
             time.sleep(0.1)
-        self.logger.debug(whoami() + "shutdown completed for " + self.cname)
+        if not self.shutdown_completed:
+            self.logger.error(whoami() + self.cname + " shutdown sequence timed out, aborting !!!!")
+        else:
+            self.logger.debug(whoami() + "shutdown completed for " + self.cname)
 
     def run(self):
         if not self.active or not self.isok:
@@ -242,14 +258,16 @@ class Camera(Thread):
                 if not cond1 or cond2:
                     break
                 time.sleep(0.05)
+            if cond1 and not cond2:   # stopped and no poll
+                break
             ret, frame0, rects, tx = self.parent_pipe.recv()
             self.tx = tx
             t_reply = time.time()
             with self.lock:
                 self.fpslist.append(1 / (t_reply - t_query))
+            self.isok = ret
             if not cond1:
                 break
-            self.isok = ret
             if not self.isok:
                 self.logger.warning(whoami() + ": error in communication with camera " + self.cname)
                 self.running = False
