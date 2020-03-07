@@ -42,9 +42,7 @@ def get_free_photos(dir, camera_config, logger):
             os.remove(freedir + f)
         except Exception as e:
             logger.warning(whoami() + str(e))
-    urllist = []
-    for c in camera_config:
-        urllist.append((c["name"], c["photo_url"], c["user"], c["password"]))
+    urllist = [(c["name"], c["photo_url"], c["user"], c["password"]) for c in camera_config]
     freephotolist = []
     for cname, url, user, pw in urllist:
         try:
