@@ -19,10 +19,48 @@ import subprocess
 from threading import Thread
 import cv2
 from guck3 import webflask
+import urllib.request
+import base64
+import numpy as np
 
 
 TERMINATED = False
 RESTART = False
+
+
+def get_free_photos(dir, camera_config, logger):
+    freedir = dir + "free/"
+    if not os.path.exists(freedir):
+        try:
+            os.mkdir(freedir)
+        except Exception as e:
+            logger.warning(whoami() + str(e))
+            return []
+    filelist = [f for f in os.listdir(freedir)]
+    for f in filelist:
+        try:
+            os.remove(freedir + f)
+        except Exception as e:
+            logger.warning(whoami() + str(e))
+    urllist = []
+    for c in camera_config:
+        urllist.append((c["name"], c["photo_url"], c["user"], c["password"]))
+    freephotolist = []
+    for cname, url, user, pw in urllist:
+        try:
+            request = urllib.request.Request(url)
+            base64string = base64.b64encode(bytes('%s:%s' % (user, pw),'ascii'))
+            request.add_header("Authorization", "Basic %s" % base64string.decode('utf-8'))
+            result = urllib.request.urlopen(request, timeout=3)
+            image = np.asarray(bytearray(result.read()), dtype="uint8")
+            image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+            datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
+            photoname = freedir + cname + "_" + datestr + ".jpg"
+            cv2.imwrite(photoname, image)
+            freephotolist.append(photoname)
+        except Exception as e:
+            logger.warning(whoami() + str(e))
+    return freephotolist
 
 
 def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
@@ -166,6 +204,7 @@ class StateData:
         self.DIRS = None
         self.DO_RECORD = False
         self.CAMERADATA = []
+        self.CAMERA_CONFIG = []
 
 
 class KeyboardThread(Thread):
@@ -497,6 +536,10 @@ def run(startmode="systemd"):
     # global data object
     state_data = StateData()
     state_data.DIRS = dirs
+    
+    # get camera data
+    cfgr = ConfigReader(cfg)
+    state_data.CAMERA_CONFIG= cfgr.get_cameras()
 
     # init logger
     print(dirs["logs"] + "g3.log")
@@ -585,6 +628,9 @@ def run(startmode="systemd"):
             elif wf_cmd == "get_host_status":
                 ret, mem_crit, cpu_crit, gpu_crit, cam_crit = get_status(state_data)
                 state_data.WF_OUTQUEUE.put(("status", (ret, mem_crit, cpu_crit, gpu_crit, cam_crit)))
+            elif wf_cmd == "get_free_photodata":
+                imglist = get_free_photos(dirs["photo"], state_data.CAMERA_CONFIG, logger)
+                state_data.WF_OUTQUEUE.put(("free_photodata", imglist))
         except (queue.Empty, EOFError):
             pass
         except Exception:

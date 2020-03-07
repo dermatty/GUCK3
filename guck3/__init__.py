@@ -24,6 +24,8 @@ class ConfigReader:
                 camera_name = self.cfg[str0]["NAME"]
                 stream_url = self.cfg[str0]["STREAM_URL"]
                 photo_url = self.cfg[str0]["PHOTO_URL"]
+                user = self.cfg[str0]["USER"]
+                password = self.cfg[str0]["PASSWORD"]
                 reboot_url = self.cfg[str0]["REBOOT_URL"]
                 ptz_mode = self.cfg[str0]["PTZ_MODE"].lower()
                 if ptz_mode not in ["start", "startstop", "none"]:
@@ -51,6 +53,8 @@ class ConfigReader:
                         "hog_scale": hog_scale,
                         "hog_thresh": hog_thresh,
                         "mog2_sensitivity": mog2_sensitivity,
+                        "user": user,
+                        "password": password,
                     }
                 camera_conf.append(cdata)
             except Exception:

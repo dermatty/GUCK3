@@ -122,6 +122,10 @@ class MainCommunicator(Thread):
                         self.outqueue.put(("get_host_status", None))
                         cmd, data = self.inqueue.get()
                         self.red.set_host_status(data)
+                    elif pcmd == "get_free_photodata":
+                        self.outqueue.put(("get_free_photodata", None))
+                        cmd, data = self.inqueue.get()
+                        self.red.set_free_photodata(data)
                     else:
                         self.outqueue.put(("get_pd_status", None))
                         cmd, data = self.inqueue.get()
@@ -280,7 +284,6 @@ def config():
 
 
 # -------------- pd_start --------------
-
 @app.route("/pdstart", methods=['GET', 'POST'])
 @flask_login.login_required
 def pdstart():
@@ -289,7 +292,6 @@ def pdstart():
 
 
 # -------------- pd_stop --------------
-
 @app.route("/pdstop", methods=['GET', 'POST'])
 @flask_login.login_required
 def pdstop():
@@ -334,6 +336,30 @@ def detections():
         except Exception:
             pass
     return render_template('detections.html', detlist=detlist)
+
+
+# -------------- photos --------------
+@app.route("/photos", methods=['GET', 'POST'])
+@flask_login.login_required
+def photos():
+    RED.set_free_photodata(None)
+    RED.set_putcmd("get_free_photodata")
+    free_photodata = None
+    while not free_photodata:
+        free_photodata = RED.get_free_photodata()
+        if not free_photodata:
+            time.sleep(0.5)
+    detlist = []
+    for p in free_photodata:
+        try:
+            p1 = os.path.basename(p)
+            shutil.copy(p, "./guck3/static/" + p1)
+            detlist.append(p1)
+        except Exception:
+            pass
+        pass
+    return render_template('photos.html', detlist=detlist)
+
 
 # -------------- livecam --------------
 @app.route('/video_feed/<camnr>')
@@ -438,7 +464,7 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
             'debug': True,
             'graceful_timeout': 10,
             'worker_class': 'gevent',
-            'workers': number_of_workers()
+            'workers': 1
         }
         app.logger.info(whoami() + ": binding gunicorn to https!")
     except Exception:
@@ -448,7 +474,7 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
             'debug': True,
             'graceful_timeout': 10,
             'worker_class': 'gevent',
-            'workers': number_of_workers()
+            'workers': 1
         }
         app.logger.warning(whoami() + ": binding gunicorn to http!")
     signal.signal(signal.SIGFPE, sighandler)     # nicht die feine englische / faut de mieux
