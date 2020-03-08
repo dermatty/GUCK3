@@ -72,6 +72,11 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     if msg == "start":
         state_data.MAINQUEUE.put(("start", bot0))
         reply = "starting GUCK3 people detection ..."
+    elif msg == "photos":
+        if bot0 == "tgram":
+            reply = "collecting photo snapshots from all cameras ..."
+        elif bot0 == "kbd":
+            reply = "cannot send photos in text console!"
     elif msg == "stop":
         if state_data.mpp_peopledetection:
             if state_data.mpp_peopledetection.pid:
@@ -339,6 +344,14 @@ class TelegramThread:
         msg = update.message.text.lower()
         reply = GeneralMsgHandler(msg, "tgram", self.state_data, self.mp_loggerqueue)
         update.message.reply_text(reply)
+        if reply.startswith("collecting photo snapshots"):
+            imglist = get_free_photos(self.state_data.DIRS["photo"], self.state_data.CAMERA_CONFIG, self.logger)
+            if imglist:
+                for photo_name in imglist:
+                    try:
+                        self.bot.send_photo(chat_id=update.effective_chat.id, photo=open(photo_name, "rb"))
+                    except Exception as e:
+                        self.logger.warning(whoami() + str(e))
 
 
 def get_status(state_data):
