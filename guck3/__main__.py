@@ -6,7 +6,7 @@ import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, get_sens_temp, get_external_ip
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, get_sens_temp
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -47,7 +47,7 @@ def get_free_photos(dir, camera_config, logger):
     for cname, url, user, pw in urllist:
         try:
             request = urllib.request.Request(url)
-            base64string = base64.b64encode(bytes('%s:%s' % (user, pw),'ascii'))
+            base64string = base64.b64encode(bytes('%s:%s' % (user, pw), 'ascii'))
             request.add_header("Authorization", "Basic %s" % base64string.decode('utf-8'))
             result = urllib.request.urlopen(request, timeout=3)
             image = np.asarray(bytearray(result.read()), dtype="uint8")
@@ -105,6 +105,8 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
         reply = "Recording on all cameras stopped!"
     elif msg == "status":
         reply, _, _, _, _ = get_status(state_data)
+    elif msg == "?" or msg == "help":
+        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus"
     else:
         reply = "Don't know what to do with '" + msg + "'!"
     return reply
@@ -253,7 +255,7 @@ class KeyboardThread(Thread):
             return
         self.logger.debug(whoami() + "starting keyboard thread")
         self.running = True
-        instruction = ">> Enter commands: start stop exit!! restart!! record on/off status"
+        instruction = ">> Enter '?' or 'help' for help"
         print(instruction)
         while self.running:
             mpp_inputto = mp.Process(target=input_to, args=(self.fn, 1, self.kbqueue, ))
@@ -291,6 +293,7 @@ class TelegramThread:
             self.updater.start_polling()
             self.running = True
             self.send_message_all("GUCK3 telegram bot started!")
+            self.send_message_all(">> Enter '?' or 'help' for help")
             self.logger.info(whoami() + "telegram handler/bot started!")
             return 1
         except Exception as e:

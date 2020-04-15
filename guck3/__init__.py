@@ -8,6 +8,50 @@ import subprocess
 import requests
 
 
+class NetConfigReader:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.config = None
+
+    def get_config(self):
+        self.config = None
+        config = {}
+        try:
+            config["ssh_user"] = self.cfg["OPTIONS"]["ssh_user"]
+            config["ssh_pass"] = self.cfg["OPTIONS"]["ssh_pass"]
+            config["host"] = self.cfg["OPTIONS"]["host"]
+            config["ping_freq"] = int(self.cfg["OPTIONS"]["ping_freq"])
+            config["t_token"] = self.cfg["TELEGRAM"]["token"]
+            config["t_chatid"] = int(self.cfg["TELEGRAM"]["chatid"])
+        except Exception:
+            return None
+        config["interfaces"] = []
+        idx = 1
+        while True:
+            try:
+                str0 = "INTERFACE" + str(idx)
+                name = self.cfg[str0]["name"]
+                interface_ip = self.cfg[str0]["interface_ip"]
+                gateway_ip = self.cfg[str0]["gateway_ip"]
+                gateway_pass = self.cfg[str0]["gateway_pass"]
+                pfsense_name = self.cfg[str0]["pfsense_name"]
+                idata = {
+                    "name": name,
+                    "pfsense_name": pfsense_name,
+                    "interface_ip": interface_ip,
+                    "gateway_ip": gateway_ip,
+                    "gateway_pass": gateway_pass,
+                }
+                config["interfaces"].append(idata)
+            except Exception:
+                break
+            idx += 1
+        if idx == 1:
+            return None
+        self.config = config
+        return config
+
+
 class ConfigReader:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -71,20 +115,23 @@ class ConfigReader:
 
 # setup folders
 def setup_dirs():
-    install_dir = os.path.dirname(os.path.realpath(__file__))
-    userhome = expanduser("~")
-    maindir = userhome + "/.guck3/"
-    logsdir = "/media/cifs/dokumente/g3logs/"
-    videodir = maindir + "video/"
-    photodir = maindir + "photo/"
-    dirs = {
-        "install": install_dir,
-        "home": userhome,
-        "main": maindir,
-        "video": videodir,
-        "photo": photodir,
-        "logs": logsdir
-    }
+    try:
+        install_dir = os.path.dirname(os.path.realpath(__file__))
+        userhome = expanduser("~")
+        maindir = userhome + "/.guck3/"
+        logsdir = "/media/cifs/dokumente/g3logs/"
+        videodir = maindir + "video/"
+        photodir = maindir + "photo/"
+        dirs = {
+            "install": install_dir,
+            "home": userhome,
+            "main": maindir,
+            "video": videodir,
+            "photo": photodir,
+            "logs": logsdir
+        }
+    except Exception as e:
+        return -1, str(e)
 
     # check for maindir
     if not os.path.exists(maindir):
@@ -107,6 +154,7 @@ def setup_dirs():
         except Exception as e:
             return -1, str(e) + ": cannot create video directory!", None, None, None, None, None
 
+    print("#1")
     # check for photodir
     if not os.path.exists(photodir):
         try:
