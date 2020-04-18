@@ -6,7 +6,7 @@ import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, get_sens_temp
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, get_sens_temp, NetConfigReader
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -22,6 +22,7 @@ from guck3 import webflask
 import urllib.request
 import base64
 import numpy as np
+import paramiko
 
 
 TERMINATED = False
@@ -105,6 +106,8 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
         reply = "Recording on all cameras stopped!"
     elif msg == "status":
         reply, _, _, _, _ = get_status(state_data)
+    elif msg == "netstatus":
+        reply = get_net_status(state_data)
     elif msg == "?" or msg == "help":
         reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus"
     else:
@@ -210,6 +213,8 @@ class StateData:
         self.DO_RECORD = False
         self.CAMERADATA = []
         self.CAMERA_CONFIG = []
+        self.NET_CONFIG = None
+        self.SSH = None
 
 
 class KeyboardThread(Thread):
@@ -355,6 +360,80 @@ class TelegramThread:
                         self.bot.send_photo(chat_id=update.effective_chat.id, photo=open(photo_name, "rb"))
                     except Exception as e:
                         self.logger.warning(whoami() + str(e))
+
+
+def ssh_connect(state_data):
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(state_data.NET_CONFIG["host"], username=state_data.NET_CONFIG["ssh_user"],
+                    password=state_data.NET_CONFIG["ssh_pass"])
+        state_data.SSH = ssh
+        return ssh
+    except Exception:
+        state_data.SSH = None
+        return False
+
+
+def get_net_status(state_data):
+    ret = "------- Net Status -------"
+    ssh = state_data.SSH
+    try:
+        transport = ssh.get_transport()
+        transport.send_ignore()
+    except Exception:
+        ssh = ssh_connect(state_data)
+        if not ssh:
+            ret += "\nCannot connect to pfsense box @ " + state_data.NET_CONFIG["host"]
+    for if0 in state_data.NET_CONFIG["interfaces"]:
+        ret += "\n" + if0["name"] + "/" + if0["pfsense_name"] + ":"
+        # check if gateway reachable
+        gateway_command = ["ping", "-c", "1", "-W 3", if0["gateway_ip"]]
+        gw_status = "up"
+        try:
+            resp = subprocess.Popen(gateway_command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            resp_stdout = resp.stdout.readlines()
+            resp_stderr = resp.stderr.readlines()
+            for err in resp_stderr:
+                if err.decode("utf-8"):
+                    gw_status = "down"
+                    break
+            if gw_status == "up":
+                gw_status == "down"
+                for std in resp_stdout:
+                    std0 = std.decode("utf-8")
+                    if "1 received" in std0:
+                        gw_status = "up"
+                        break
+            ret += "\n   Modem:   " + gw_status + " (ping to " + if0["gateway_ip"] + ")"
+        except Exception as e:
+            ret += "\n   Modem:    cannot detect, " + str(e) + " (ping to " + if0["gateway_ip"] + ")"
+        if not ssh:
+            continue
+        # check ping from pfsense interface
+        interface_command = "ping -c 1 -W 3 -S " + if0["interface_ip"] + " 8.8.8.8"
+        ifstatus = "up"
+        try:
+            stdin, stdout, stderr = ssh.exec_command(interface_command)
+            stdout.channel.recv_exit_status()
+            resp_stdout = stdout.readlines()
+            resp_stderr = stderr.readlines()
+            # check if stderr
+            for err in resp_stderr:
+                if err:
+                    ifstatus = "down"
+                    break
+            # check stdout if ok
+            if ifstatus == "up":
+                ifstatus = "down"
+                for std in resp_stdout:
+                    if ("1 packets received" in std) and ("0.0%" in std):
+                        ifstatus = "up"
+                        break
+            ret += "\n   Internet: " + ifstatus + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
+        except Exception as e:
+            ret += "\n   Internet: cannot detect, " + str(e) + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
+    return ret
 
 
 def get_status(state_data):
@@ -515,7 +594,7 @@ def run(startmode="systemd"):
         except Exception:
             pass
 
-    # read config
+    # read guck3 config
     try:
         cfg_file = dirs["main"] + "guck3.config"
         cfg = configparser.ConfigParser()
@@ -524,7 +603,14 @@ def run(startmode="systemd"):
         print(str(datetime.datetime.now()) + ": START UP - " + str(e) + ": config file syntax error, exiting")
         return -1
 
-    cfgr = ConfigReader(cfg)
+    # read guck3_net config
+    try:
+        cfg_file_net = dirs["main"] + "net.config"
+        cfg_net = configparser.ConfigParser()
+        cfg_net.read(cfg_file_net)
+    except Exception as e:
+        print(str(datetime.datetime.now()) + ": START UP - " + str(e) + ": net config file syntax error, exiting")
+        return -1
 
     # get log level
     try:
@@ -550,10 +636,13 @@ def run(startmode="systemd"):
     # global data object
     state_data = StateData()
     state_data.DIRS = dirs
-    
+
     # get camera data
     cfgr = ConfigReader(cfg)
     state_data.CAMERA_CONFIG= cfgr.get_cameras()
+    cfgr_net = NetConfigReader(cfg_net)
+    state_data.NET_CONFIG = cfgr_net.get_config()
+    print(">>>>>>>>>", state_data.NET_CONFIG)
 
     # init logger
     print(dirs["logs"] + "g3.log")

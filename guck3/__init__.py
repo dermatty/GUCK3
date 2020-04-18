@@ -21,8 +21,6 @@ class NetConfigReader:
             config["ssh_pass"] = self.cfg["OPTIONS"]["ssh_pass"]
             config["host"] = self.cfg["OPTIONS"]["host"]
             config["ping_freq"] = int(self.cfg["OPTIONS"]["ping_freq"])
-            config["t_token"] = self.cfg["TELEGRAM"]["token"]
-            config["t_chatid"] = int(self.cfg["TELEGRAM"]["chatid"])
         except Exception:
             return None
         config["interfaces"] = []
@@ -35,12 +33,14 @@ class NetConfigReader:
                 gateway_ip = self.cfg[str0]["gateway_ip"]
                 gateway_pass = self.cfg[str0]["gateway_pass"]
                 pfsense_name = self.cfg[str0]["pfsense_name"]
+                reboot_cmd = self.cfg[str0]["reboot_cmd"]
                 idata = {
                     "name": name,
                     "pfsense_name": pfsense_name,
                     "interface_ip": interface_ip,
                     "gateway_ip": gateway_ip,
                     "gateway_pass": gateway_pass,
+                    "reboot_cmd": reboot_cmd,
                 }
                 config["interfaces"].append(idata)
             except Exception:
