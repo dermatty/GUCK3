@@ -34,6 +34,7 @@ class NetConfigReader:
                 gateway_pass = self.cfg[str0]["gateway_pass"]
                 pfsense_name = self.cfg[str0]["pfsense_name"]
                 reboot_cmd = self.cfg[str0]["reboot_cmd"]
+                dns = self.cfg[str0]["dns"]
                 idata = {
                     "name": name,
                     "pfsense_name": pfsense_name,
@@ -41,6 +42,7 @@ class NetConfigReader:
                     "gateway_ip": gateway_ip,
                     "gateway_pass": gateway_pass,
                     "reboot_cmd": reboot_cmd,
+                    "dns": dns
                 }
                 config["interfaces"].append(idata)
             except Exception:

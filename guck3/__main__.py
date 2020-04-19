@@ -23,6 +23,7 @@ import urllib.request
 import base64
 import numpy as np
 import paramiko
+import telnetlib
 
 
 TERMINATED = False
@@ -73,6 +74,20 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     if msg == "start":
         state_data.MAINQUEUE.put(("start", bot0))
         reply = "starting GUCK3 people detection ..."
+    elif msg.startswith("netrestart"):
+        try:
+            nettarget = (msg.split("netrestart")[-1]).lstrip()
+            nettarget_if = None
+            for if0 in state_data.NET_CONFIG["interfaces"]:
+                if nettarget == if0["name"] or nettarget == if0["pfsense_name"]:
+                    nettarget_if = if0
+                    break
+            if not nettarget_if:
+                raise ValueError("target not found")
+            reply = "restarting " + nettarget + "... "
+            reply += netrestart(nettarget_if)
+        except Exception as e:
+            reply = "cannot parse netrestart target: " + str(e)
     elif msg == "photos":
         if bot0 == "tgram":
             reply = "collecting photo snapshots from all cameras ..."
@@ -109,10 +124,30 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     elif msg == "netstatus":
         reply = get_net_status(state_data)
     elif msg == "?" or msg == "help":
-        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus"
+        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus|netrestart <if>"
     else:
         reply = "Don't know what to do with '" + msg + "'!"
     return reply
+
+
+def netrestart(if0):
+    host = if0["gateway_ip"]
+    password = if0["gateway_pass"]
+    try:
+        tn = telnetlib.Telnet(host)
+        tn.read_until(b"password:", timeout=5)  # b'\r\r\npassword:'
+        tn.write(password.encode("ascii") + b"\n")
+        tn.read_until(b"(conf)#", timeout=5)  # except EOFError as e, dann fail!!
+        tn.write(b"dev reboot\n")
+        #tn.write(b"help\n")
+        #tn.write(b"logout\n")
+        ret = tn.read_all().decode('ascii')
+        if "dev reboot" in ret:
+            return "executing 'dev reboot' on " + if0["name"]
+        else:
+            raise EOFError("telnet communication error!")
+    except Exception as e:
+        return "netrestart error: " + str(e)
 
 
 class SigHandler_g3:
@@ -386,7 +421,24 @@ def get_net_status(state_data):
         if not ssh:
             ret += "\nCannot connect to pfsense box @ " + state_data.NET_CONFIG["host"]
     for if0 in state_data.NET_CONFIG["interfaces"]:
-        ret += "\n" + if0["name"] + "/" + if0["pfsense_name"] + ":"
+        ret += "\n" + if0["name"] + "/" + if0["pfsense_name"] 
+        # get external ip for dns
+        dns_command = ["nslookup", if0["dns"]]
+        try:
+            resp = subprocess.Popen(dns_command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            resp_stdout = resp.stdout.readlines()
+            resp_stderr = resp.stderr.readlines()
+            dns_status = "N/A"
+            for std in resp_stdout:
+                std0 = std.decode("utf-8")
+                if "Address: " in std0 and not "#53" in std0:
+                    dns_status = (std0.split("Address: ")[-1]).rstrip("\n")
+                    break
+            ret += " (public: " + dns_status + ")"
+        except Exception as e:
+            ret += " (public: N/A)"
+        if not ssh:
+            continue
         # check if gateway reachable
         gateway_command = ["ping", "-c", "1", "-W 3", if0["gateway_ip"]]
         gw_status = "up"
@@ -405,13 +457,13 @@ def get_net_status(state_data):
                     if "1 received" in std0:
                         gw_status = "up"
                         break
-            ret += "\n   Modem:   " + gw_status + " (ping to " + if0["gateway_ip"] + ")"
+            ret += "\n   Modem:  " + gw_status + " (ping to " + if0["gateway_ip"] + ")"
         except Exception as e:
-            ret += "\n   Modem:    cannot detect, " + str(e) + " (ping to " + if0["gateway_ip"] + ")"
+            ret += "\n   Modem:   cannot detect, " + str(e) + " (ping to " + if0["gateway_ip"] + ")"
         if not ssh:
             continue
         # check ping from pfsense interface
-        interface_command = "ping -c 1 -W 3 -S " + if0["interface_ip"] + " 8.8.8.8"
+        interface_command = "ping -v -c 1 -W 3 -S " + if0["interface_ip"] + " 8.8.8.8"
         ifstatus = "up"
         try:
             stdin, stdout, stderr = ssh.exec_command(interface_command)
@@ -425,12 +477,18 @@ def get_net_status(state_data):
                     break
             # check stdout if ok
             if ifstatus == "up":
+                dt = "-"
                 ifstatus = "down"
                 for std in resp_stdout:
                     if ("1 packets received" in std) and ("0.0%" in std):
                         ifstatus = "up"
-                        break
-            ret += "\n   Internet: " + ifstatus + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
+                    if "round-trip" in std:
+                        try:
+                            dt = std.split("round-trip min/avg/max/stddev = ")[-1]
+                            dt = (dt.split("/")[1]).split(".")[0]
+                        except Exception:
+                            dt = "-"
+            ret += "\n   Internet: " + ifstatus + " (ping from " + if0["interface_ip"] + " to 8.8.8.8 @ " + dt + "ms)"
         except Exception as e:
             ret += "\n   Internet: cannot detect, " + str(e) + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
     return ret
