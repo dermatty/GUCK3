@@ -476,8 +476,8 @@ def get_net_status(state_data):
                     ifstatus = "down"
                     break
             # check stdout if ok
+            dt = "-"
             if ifstatus == "up":
-                dt = "-"
                 ifstatus = "down"
                 for std in resp_stdout:
                     if ("1 packets received" in std) and ("0.0%" in std):
