@@ -134,7 +134,7 @@ def netrestart(if0):
     host = if0["gateway_ip"]
     password = if0["gateway_pass"]
     try:
-        tn = telnetlib.Telnet(host)
+        tn = telnetlib.Telnet(host, timeout=5)
         tn.read_until(b"password:", timeout=5)  # b'\r\r\npassword:'
         tn.write(password.encode("ascii") + b"\n")
         tn.read_until(b"(conf)#", timeout=5)  # except EOFError as e, dann fail!!
@@ -446,12 +446,14 @@ def get_net_status(state_data):
             resp = subprocess.Popen(gateway_command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             resp_stdout = resp.stdout.readlines()
             resp_stderr = resp.stderr.readlines()
+            # print(">> stdout >>", if0["name"], resp_stdout)
+            # print(">> stderr >>", if0["name"], resp_stderr)
             for err in resp_stderr:
                 if err.decode("utf-8"):
                     gw_status = "down"
                     break
             if gw_status == "up":
-                gw_status == "down"
+                gw_status = "down"
                 for std in resp_stdout:
                     std0 = std.decode("utf-8")
                     if "1 received" in std0:
@@ -700,7 +702,6 @@ def run(startmode="systemd"):
     state_data.CAMERA_CONFIG= cfgr.get_cameras()
     cfgr_net = NetConfigReader(cfg_net)
     state_data.NET_CONFIG = cfgr_net.get_config()
-    print(">>>>>>>>>", state_data.NET_CONFIG)
 
     # init logger
     print(dirs["logs"] + "g3.log")
