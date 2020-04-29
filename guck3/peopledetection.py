@@ -257,7 +257,7 @@ class Camera(Thread):
                 cond2 = self.parent_pipe.poll()
                 if not cond1 or cond2:
                     break
-                time.sleep(0.05)
+                time.sleep(0.01)
             if cond1 and not cond2:   # stopped and no poll
                 break
             ret, frame0, rects, tx = self.parent_pipe.recv()

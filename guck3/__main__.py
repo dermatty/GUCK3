@@ -74,9 +74,9 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     if msg == "start":
         state_data.MAINQUEUE.put(("start", bot0))
         reply = "starting GUCK3 people detection ..."
-    elif msg.startswith("netrestart"):
+    elif msg.startswith("modemrestart"):
         try:
-            nettarget = (msg.split("netrestart")[-1]).lstrip()
+            nettarget = (msg.split("modemrestart")[-1]).lstrip()
             nettarget_if = None
             for if0 in state_data.NET_CONFIG["interfaces"]:
                 if nettarget == if0["name"] or nettarget == if0["pfsense_name"]:
@@ -84,10 +84,24 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
                     break
             if not nettarget_if:
                 raise ValueError("target not found")
-            reply = "restarting " + nettarget + "... "
-            reply += netrestart(nettarget_if)
+            reply = "restarting modem " + nettarget + "... "
+            reply += modemrestart(nettarget_if)
         except Exception as e:
-            reply = "cannot parse netrestart target: " + str(e)
+            reply = "cannot parse modemrestart target: " + str(e)
+    elif msg.startswith("ifrestart"):
+        try:
+            nettarget = (msg.split("ifrestart")[-1]).lstrip()
+            nettarget_if = None
+            for if0 in state_data.NET_CONFIG["interfaces"]:
+                if nettarget == if0["name"] or nettarget == if0["pfsense_name"]:
+                    nettarget_if = if0
+                    break
+            if not nettarget_if:
+                raise ValueError("target not found")
+            reply = "restarting interface " + nettarget + "... "
+            reply += ifrestart(state_data, nettarget_if)
+        except Exception as e:
+            reply = "cannot parse modemrestart target: " + str(e)
     elif msg == "photos":
         if bot0 == "tgram":
             reply = "collecting photo snapshots from all cameras ..."
@@ -124,13 +138,68 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     elif msg == "netstatus":
         reply = get_net_status(state_data)
     elif msg == "?" or msg == "help":
-        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus|netrestart <if>"
+        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus|modemrestart <if>"
     else:
         reply = "Don't know what to do with '" + msg + "'!"
     return reply
 
 
-def netrestart(if0):
+# this re-inits the interface on pfsense (ifconfig igb2 down / up)
+# write def get_status_for_if(!!)
+def ifrestart(state_data, if0):
+    return "<void>"
+    pfsense_if = if0["pfsense_name"]
+    ssh = state_data.SSH
+    try:
+        transport = ssh.get_transport()
+        transport.send_ignore()
+    except Exception:
+        ssh = ssh_connect(state_data)
+        if not ssh:
+            return "Cannot ssh to pfsense box @ " + state_data.NET_CONFIG["host"]
+    # ssh into pfsense and di ifconfig up / down
+    downcmd = "ifconfig " + pfsense_if + " down"
+    upcmd = "ifconfig " + pfsense_if + " up"
+    # ifconfig down
+    # wait until 100% packet loss on 192.168.2.1 (modem itself)
+    # ifconfig up --> Achtung sometime stops unbound(s.u.)
+    # wait until < 50% packet loss!
+    # restart php-fm / webgui autom.
+    # restart webgui
+    # [2.4.5-RELEASE][admin@pfSense.iv.at]/root: pfSsh.php playback svc status unbound
+    #             Service unbound is running.
+
+    try:
+        stdin, stdout, stderr = ssh.exec_command(downcmd)
+        stdout.channel.recv_exit_status()
+        resp_stdout = stdout.readlines()
+        resp_stderr = stderr.readlines()
+        # check if stderr
+        for err in resp_stderr:
+            if err:
+                ifstatus = "down"
+                break
+        # check stdout if ok
+        dt = "-"
+        if ifstatus == "up":
+            ifstatus = "down"
+            for std in resp_stdout:
+                if ("1 packets received" in std) and ("0.0%" in std):
+                    ifstatus = "up"
+                if "round-trip" in std:
+                    try:
+                        dt = std.split("round-trip min/avg/max/stddev = ")[-1]
+                        dt = (dt.split("/")[1]).split(".")[0]
+                    except Exception:
+                        dt = "-"
+    except Exception as e:
+        ret = "Internet: cannot detect, " + str(e) + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
+    return "OK"
+
+
+
+# this reboots the modem (e.g. if there is not LTE connection)
+def modemrestart(if0):
     host = if0["gateway_ip"]
     password = if0["gateway_pass"]
     try:
@@ -147,7 +216,7 @@ def netrestart(if0):
         else:
             raise EOFError("telnet communication error!")
     except Exception as e:
-        return "netrestart error: " + str(e)
+        return "modemrestart error: " + str(e)
 
 
 class SigHandler_g3:
@@ -770,7 +839,7 @@ def run(startmode="systemd"):
 
     while not TERMINATED:
 
-        time.sleep(0.02)
+        time.sleep(0.01)
 
         # get from webflask queue
         try:
