@@ -100,7 +100,7 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     elif msg == "netstatus":
         reply = get_net_status(state_data)
     elif msg == "?" or msg == "help":
-        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus|modemrestart <if>ifrestart <if>|servicerestart"
+        reply = "start|stop|exit!!|restart!!|record on/off|status|photos|netstatus|modemrestart <if>|ifrestart <if>|servicerestart"
     else:
         reply = "Don't know what to do with '" + msg + "'!"
     return reply

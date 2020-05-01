@@ -41,7 +41,7 @@ def services_restart(state_data):
         stdout.channel.recv_exit_status()
         # wait 2 sec.
         time.sleep(2)
-        # restart webui
+        # restart unbound
         stdin, stdout, stderr = ssh.exec_command(restart_unbound)
         stdout.channel.recv_exit_status()
         return "services restart: SUCCESS!"
@@ -76,7 +76,7 @@ def ifrestart(state_data, if0):
         # send "if down"
         stdin, stdout, stderr = ssh.exec_command(downcmd)
         stdout.channel.recv_exit_status()
-        # wait 5 sec.
+        # wait 10 sec.
         time.sleep(10)
         # send "if up"
         stdin, stdout, stderr = ssh.exec_command(upcmd)
@@ -86,7 +86,7 @@ def ifrestart(state_data, if0):
         return "interface restart for " + pfsense_if + ": FAILURE - " + str(e)
 
 
-# this reboots the modem (e.g. if there is not LTE connection)
+# this reboots the modem via telnet(e.g. if there is not LTE connection)
 def modemrestart(if0):
     host = if0["gateway_ip"]
     password = if0["gateway_pass"]
@@ -96,8 +96,8 @@ def modemrestart(if0):
         tn.write(password.encode("ascii") + b"\n")
         tn.read_until(b"(conf)#", timeout=5)  # except EOFError as e, dann fail!!
         tn.write(b"dev reboot\n")
-        #tn.write(b"help\n")
-        #tn.write(b"logout\n")
+        # tn.write(b"help\n")
+        # tn.write(b"logout\n")
         ret = tn.read_all().decode('ascii')
         if "dev reboot" in ret:
             return "executing 'dev reboot' on " + if0["name"]
@@ -118,7 +118,7 @@ def get_net_status(state_data):
         if not ssh:
             ret += "\nCannot connect to pfsense box @ " + state_data.NET_CONFIG["host"]
     for if0 in state_data.NET_CONFIG["interfaces"]:
-        ret += "\n" + if0["name"] + "/" + if0["pfsense_name"] 
+        ret += "\n" + if0["name"] + "/" + if0["pfsense_name"]
         # get external ip for dns
         dns_command = ["nslookup", if0["dns"]]
         try:
@@ -128,11 +128,11 @@ def get_net_status(state_data):
             dns_status = "N/A"
             for std in resp_stdout:
                 std0 = std.decode("utf-8")
-                if "Address: " in std0 and not "#53" in std0:
+                if "Address: " in std0 and "#53" not in std0:
                     dns_status = (std0.split("Address: ")[-1]).rstrip("\n")
                     break
             ret += " (public: " + dns_status + ")"
-        except Exception as e:
+        except Exception:
             ret += " (public: N/A)"
         if not ssh:
             continue
