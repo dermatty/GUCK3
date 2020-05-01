@@ -5,7 +5,15 @@ import shutil
 import queue
 import json
 import subprocess
-import requests
+import sensors
+import psutil
+import time
+import urllib.request
+from guck3.mplogging import whoami
+import base64
+import numpy as np
+import datetime
+import cv2
 
 
 class NetConfigReader:
@@ -323,3 +331,162 @@ def get_sens_temp(hostn="raspisens", filen="/home/pi/sens.txt"):
     return temp, hum
 
 
+def get_status(state_data):
+    osversion = os.popen("cat /etc/os-release").read().split("\n")[2].split("=")[1].replace('"', '')
+
+    # os & version
+    ret = "------- General -------"
+    ret += "\nOS: " + osversion
+    ret += "\nVersion: " + os.environ["GUCK3_VERSION"]
+    ret += "\nAlarm System Active: "
+    ret += "YES" if state_data.PD_ACTIVE else "NO"
+    '''ret += "\nRecording: "
+    ret += "YES" if recording else "NO"
+    ret += "\nPaused: "
+    ret += "YES" if not alarmrunning else "NO"
+    ret += "\nTelegram Mode: " + TG_MODE
+    ret += "\nAI Mode: " + AIMODE.upper()
+    ret += "\nAI Sens.: " + str(AISENS)
+    ret += "\nHCLIMIT: " + str(HCLIMIT)
+    ret += "\nNIGHTMODE: "
+    ret += "YES" if NIGHTMODE else "NO"'''
+    ret += "\n------- System -------"
+
+    # memory
+    overall_mem = round(psutil.virtual_memory()[0] / float(2 ** 20) / 1024, 2)
+    free_mem = round(psutil.virtual_memory()[1] / float(2 ** 20) / 1024, 2)
+    used_mem = round(overall_mem - free_mem, 2)
+    perc_used = round((used_mem / overall_mem) * 100, 2)
+    mem_crit = False
+    if perc_used > 85:
+        mem_crit = True
+
+    # cpu
+    cpu_perc0 = psutil.cpu_percent(interval=0.25, percpu=True)
+    cpu_avg = sum(cpu_perc0)/float(len(cpu_perc0))
+    cpu_perc = (max(cpu_perc0) * 0.6 + cpu_avg * 0.4)/2
+    cpu_crit = False
+    if cpu_perc > 0.8:
+        cpu_crit = True
+    ret += "\nRAM: " + str(perc_used) + "% ( =" + str(used_mem) + " GB) of overall " + str(overall_mem) + \
+           " GB used"
+    ret += "\nCPU: " + str(round(cpu_avg, 1)) + "% ("
+    for cpu0 in cpu_perc0:
+        ret += str(cpu0) + " "
+    ret += ")"
+
+    # sensors / cpu temp
+    sensors.init()
+    cpu_temp = []
+    for chip in sensors.iter_detected_chips():
+        for feature in chip:
+            if feature.label[0:4] == "Core":
+                temp0 = feature.get_value()
+                cpu_temp.append(temp0)
+                ret += "\nCPU " + feature.label + " temp.: " + str(round(temp0, 2)) + "°"
+    sensors.cleanup()
+    if len(cpu_temp) > 0:
+        avg_cpu_temp = sum(c for c in cpu_temp)/len(cpu_temp)
+    else:
+        avg_cpu_temp = 0
+    if avg_cpu_temp > 52.0:
+        cpu_crit = True
+    else:
+        cpu_crit = False
+
+    # gpu
+    if osversion == "Gentoo/Linux":
+        smifn = "/opt/bin/nvidia-smi"
+    else:
+        smifn = "/usr/bin/nvidia-smi"
+    try:
+        gputemp = subprocess.Popen([smifn, "--query-gpu=temperature.gpu", "--format=csv"],
+                                   stdout=subprocess.PIPE).stdout.readlines()[1]
+        gpuutil = subprocess.Popen([smifn, "--query-gpu=utilization.gpu", "--format=csv"],
+                                   stdout=subprocess.PIPE).stdout.readlines()[1]
+        gputemp_str = gputemp.decode("utf-8").rstrip()
+        gpuutil_str = gpuutil.decode("utf-8").rstrip()
+    except Exception:
+        gputemp_str = "0.0"
+        gpuutil_str = "0.0%"
+    ret += "\nGPU: " + gputemp_str + "°C" + " / " + gpuutil_str + " util."
+    if float(gputemp_str) > 70.0:
+        gpu_crit = True
+    else:
+        gpu_crit = False
+
+    cam_crit = False
+    if state_data.PD_ACTIVE:
+        ret += "\n------- Cameras -------"
+        for c in state_data.CAMERADATA:
+            cname, cframe, cfps, cisok, cactive, ctx = c
+            if not cactive:
+                ctstatus0 = "DISABLED"
+                ret += "\n" + cname + " " + ctstatus0
+            else:
+                try:
+                    dt = time.time() - ctx
+                except Exception:
+                    dt = 31
+                if dt > 30 or not cisok:
+                    ctstatus0 = "DOWN"
+                elif dt > 3:
+                    ctstatus0 = "DELAYED"
+                else:
+                    ctstatus0 = "running"
+                    if ctstatus0 in ["DOWN", "DELAYED"]:
+                        cam_crit = True
+                    else:
+                        cam_crit = False
+                ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
+
+    temp, hum = get_sens_temp()
+    ret += "\n------- Sensors -------"
+    ret += "\nTemperature:  " + "%.1f" % temp + "C"
+    ret += "\nHumidity: " + "%.1f" % hum + "%"
+    ret += "\n------- System Summary -------"
+    ret += "\nRAM: "
+    ret += "CRITICAL!" if mem_crit else "OK!"
+    ret += "\nCPU: "
+    ret += "CRITICAL!" if cpu_crit else "OK!"
+    ret += "\nGPU: "
+    ret += "CRITICAL!" if gpu_crit else "OK!"
+    ret += "\nCAMs: "
+    if state_data.PD_ACTIVE:
+        ret += "CRITICAL!" if cam_crit else "OK!"
+    else:
+        ret += "NOT RUNNING!"
+    return ret, mem_crit, cpu_crit, gpu_crit, cam_crit
+
+
+def get_free_photos(dir, camera_config, logger):
+    freedir = dir + "free/"
+    if not os.path.exists(freedir):
+        try:
+            os.mkdir(freedir)
+        except Exception as e:
+            logger.warning(whoami() + str(e))
+            return []
+    filelist = [f for f in os.listdir(freedir)]
+    for f in filelist:
+        try:
+            os.remove(freedir + f)
+        except Exception as e:
+            logger.warning(whoami() + str(e))
+    urllist = [(c["name"], c["photo_url"], c["user"], c["password"]) for c in camera_config]
+    freephotolist = []
+    for cname, url, user, pw in urllist:
+        try:
+            request = urllib.request.Request(url)
+            base64string = base64.b64encode(bytes('%s:%s' % (user, pw), 'ascii'))
+            request.add_header("Authorization", "Basic %s" % base64string.decode('utf-8'))
+            result = urllib.request.urlopen(request, timeout=3)
+            image = np.asarray(bytearray(result.read()), dtype="uint8")
+            image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+            datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
+            photoname = freedir + cname + "_" + datestr + ".jpg"
+            cv2.imwrite(photoname, image)
+            freephotolist.append(photoname)
+        except Exception as e:
+            logger.warning(whoami() + str(e))
+    return freephotolist

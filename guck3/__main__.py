@@ -1,12 +1,11 @@
 import json
 import os
-import sensors
-import psutil
 import configparser
 from setproctitle import setproctitle
 import logging
 import logging.handlers
-from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, get_sens_temp, NetConfigReader
+from guck3 import setup_dirs, mplogging, peopledetection, clear_all_queues, ConfigReader, NetConfigReader, get_status, get_free_photos
+from guck3.netlib import modemrestart, ifrestart, services_restart, get_net_status
 from guck3.mplogging import whoami
 import datetime
 import signal
@@ -15,52 +14,13 @@ import multiprocessing as mp
 import time
 import queue
 from telegram.ext import Updater, MessageHandler, Filters
-import subprocess
 from threading import Thread
 import cv2
 from guck3 import webflask
-import urllib.request
-import base64
-import numpy as np
-import paramiko
-import telnetlib
 
 
 TERMINATED = False
 RESTART = False
-
-
-def get_free_photos(dir, camera_config, logger):
-    freedir = dir + "free/"
-    if not os.path.exists(freedir):
-        try:
-            os.mkdir(freedir)
-        except Exception as e:
-            logger.warning(whoami() + str(e))
-            return []
-    filelist = [f for f in os.listdir(freedir)]
-    for f in filelist:
-        try:
-            os.remove(freedir + f)
-        except Exception as e:
-            logger.warning(whoami() + str(e))
-    urllist = [(c["name"], c["photo_url"], c["user"], c["password"]) for c in camera_config]
-    freephotolist = []
-    for cname, url, user, pw in urllist:
-        try:
-            request = urllib.request.Request(url)
-            base64string = base64.b64encode(bytes('%s:%s' % (user, pw), 'ascii'))
-            request.add_header("Authorization", "Basic %s" % base64string.decode('utf-8'))
-            result = urllib.request.urlopen(request, timeout=3)
-            image = np.asarray(bytearray(result.read()), dtype="uint8")
-            image = cv2.imdecode(image, cv2.IMREAD_COLOR)
-            datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
-            photoname = freedir + cname + "_" + datestr + ".jpg"
-            cv2.imwrite(photoname, image)
-            freephotolist.append(photoname)
-        except Exception as e:
-            logger.warning(whoami() + str(e))
-    return freephotolist
 
 
 def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
@@ -102,6 +62,8 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
             reply += ifrestart(state_data, nettarget_if)
         except Exception as e:
             reply = "cannot parse modemrestart target: " + str(e)
+    elif msg.startswith("servicerestart"):
+        reply = services_restart(state_data)
     elif msg == "photos":
         if bot0 == "tgram":
             reply = "collecting photo snapshots from all cameras ..."
@@ -138,85 +100,10 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     elif msg == "netstatus":
         reply = get_net_status(state_data)
     elif msg == "?" or msg == "help":
-        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus|modemrestart <if>"
+        reply = "start|stop|exit!!|restart!!|record on|record off|status|photos|netstatus|modemrestart <if>ifrestart <if>|servicerestart"
     else:
         reply = "Don't know what to do with '" + msg + "'!"
     return reply
-
-
-# this re-inits the interface on pfsense (ifconfig igb2 down / up)
-# write def get_status_for_if(!!)
-def ifrestart(state_data, if0):
-    return "<void>"
-    pfsense_if = if0["pfsense_name"]
-    ssh = state_data.SSH
-    try:
-        transport = ssh.get_transport()
-        transport.send_ignore()
-    except Exception:
-        ssh = ssh_connect(state_data)
-        if not ssh:
-            return "Cannot ssh to pfsense box @ " + state_data.NET_CONFIG["host"]
-    # ssh into pfsense and di ifconfig up / down
-    downcmd = "ifconfig " + pfsense_if + " down"
-    upcmd = "ifconfig " + pfsense_if + " up"
-    # ifconfig down
-    # wait until 100% packet loss on 192.168.2.1 (modem itself)
-    # ifconfig up --> Achtung sometime stops unbound(s.u.)
-    # wait until < 50% packet loss!
-    # restart php-fm / webgui autom.
-    # restart webgui
-    # [2.4.5-RELEASE][admin@pfSense.iv.at]/root: pfSsh.php playback svc status unbound
-    #             Service unbound is running.
-
-    try:
-        stdin, stdout, stderr = ssh.exec_command(downcmd)
-        stdout.channel.recv_exit_status()
-        resp_stdout = stdout.readlines()
-        resp_stderr = stderr.readlines()
-        # check if stderr
-        for err in resp_stderr:
-            if err:
-                ifstatus = "down"
-                break
-        # check stdout if ok
-        dt = "-"
-        if ifstatus == "up":
-            ifstatus = "down"
-            for std in resp_stdout:
-                if ("1 packets received" in std) and ("0.0%" in std):
-                    ifstatus = "up"
-                if "round-trip" in std:
-                    try:
-                        dt = std.split("round-trip min/avg/max/stddev = ")[-1]
-                        dt = (dt.split("/")[1]).split(".")[0]
-                    except Exception:
-                        dt = "-"
-    except Exception as e:
-        ret = "Internet: cannot detect, " + str(e) + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
-    return "OK"
-
-
-
-# this reboots the modem (e.g. if there is not LTE connection)
-def modemrestart(if0):
-    host = if0["gateway_ip"]
-    password = if0["gateway_pass"]
-    try:
-        tn = telnetlib.Telnet(host, timeout=5)
-        tn.read_until(b"password:", timeout=5)  # b'\r\r\npassword:'
-        tn.write(password.encode("ascii") + b"\n")
-        tn.read_until(b"(conf)#", timeout=5)  # except EOFError as e, dann fail!!
-        tn.write(b"dev reboot\n")
-        #tn.write(b"help\n")
-        #tn.write(b"logout\n")
-        ret = tn.read_all().decode('ascii')
-        if "dev reboot" in ret:
-            return "executing 'dev reboot' on " + if0["name"]
-        else:
-            raise EOFError("telnet communication error!")
-    except Exception as e:
-        return "modemrestart error: " + str(e)
 
 
 class SigHandler_g3:
@@ -466,234 +353,6 @@ class TelegramThread:
                         self.logger.warning(whoami() + str(e))
 
 
-def ssh_connect(state_data):
-    try:
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(state_data.NET_CONFIG["host"], username=state_data.NET_CONFIG["ssh_user"],
-                    password=state_data.NET_CONFIG["ssh_pass"])
-        state_data.SSH = ssh
-        return ssh
-    except Exception:
-        state_data.SSH = None
-        return False
-
-
-def get_net_status(state_data):
-    ret = "------- Net Status -------"
-    ssh = state_data.SSH
-    try:
-        transport = ssh.get_transport()
-        transport.send_ignore()
-    except Exception:
-        ssh = ssh_connect(state_data)
-        if not ssh:
-            ret += "\nCannot connect to pfsense box @ " + state_data.NET_CONFIG["host"]
-    for if0 in state_data.NET_CONFIG["interfaces"]:
-        ret += "\n" + if0["name"] + "/" + if0["pfsense_name"] 
-        # get external ip for dns
-        dns_command = ["nslookup", if0["dns"]]
-        try:
-            resp = subprocess.Popen(dns_command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            resp_stdout = resp.stdout.readlines()
-            resp_stderr = resp.stderr.readlines()
-            dns_status = "N/A"
-            for std in resp_stdout:
-                std0 = std.decode("utf-8")
-                if "Address: " in std0 and not "#53" in std0:
-                    dns_status = (std0.split("Address: ")[-1]).rstrip("\n")
-                    break
-            ret += " (public: " + dns_status + ")"
-        except Exception as e:
-            ret += " (public: N/A)"
-        if not ssh:
-            continue
-        # check if gateway reachable
-        gateway_command = ["ping", "-c", "1", "-W 3", if0["gateway_ip"]]
-        gw_status = "up"
-        try:
-            resp = subprocess.Popen(gateway_command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            resp_stdout = resp.stdout.readlines()
-            resp_stderr = resp.stderr.readlines()
-            # print(">> stdout >>", if0["name"], resp_stdout)
-            # print(">> stderr >>", if0["name"], resp_stderr)
-            for err in resp_stderr:
-                if err.decode("utf-8"):
-                    gw_status = "down"
-                    break
-            if gw_status == "up":
-                gw_status = "down"
-                for std in resp_stdout:
-                    std0 = std.decode("utf-8")
-                    if "1 received" in std0:
-                        gw_status = "up"
-                        break
-            ret += "\n   Modem:  " + gw_status + " (ping to " + if0["gateway_ip"] + ")"
-        except Exception as e:
-            ret += "\n   Modem:   cannot detect, " + str(e) + " (ping to " + if0["gateway_ip"] + ")"
-        if not ssh:
-            continue
-        # check ping from pfsense interface
-        interface_command = "ping -v -c 1 -W 3 -S " + if0["interface_ip"] + " 8.8.8.8"
-        ifstatus = "up"
-        try:
-            stdin, stdout, stderr = ssh.exec_command(interface_command)
-            stdout.channel.recv_exit_status()
-            resp_stdout = stdout.readlines()
-            resp_stderr = stderr.readlines()
-            # check if stderr
-            for err in resp_stderr:
-                if err:
-                    ifstatus = "down"
-                    break
-            # check stdout if ok
-            dt = "-"
-            if ifstatus == "up":
-                ifstatus = "down"
-                for std in resp_stdout:
-                    if ("1 packets received" in std) and ("0.0%" in std):
-                        ifstatus = "up"
-                    if "round-trip" in std:
-                        try:
-                            dt = std.split("round-trip min/avg/max/stddev = ")[-1]
-                            dt = (dt.split("/")[1]).split(".")[0]
-                        except Exception:
-                            dt = "-"
-            ret += "\n   Internet: " + ifstatus + " (ping from " + if0["interface_ip"] + " to 8.8.8.8 @ " + dt + "ms)"
-        except Exception as e:
-            ret += "\n   Internet: cannot detect, " + str(e) + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
-    return ret
-
-
-def get_status(state_data):
-
-    osversion = os.popen("cat /etc/os-release").read().split("\n")[2].split("=")[1].replace('"', '')
-
-    # os & version
-    ret = "------- General -------"
-    ret += "\nOS: " + osversion
-    ret += "\nVersion: " + os.environ["GUCK3_VERSION"]
-    ret += "\nAlarm System Active: "
-    ret += "YES" if state_data.PD_ACTIVE else "NO"
-    '''ret += "\nRecording: "
-    ret += "YES" if recording else "NO"
-    ret += "\nPaused: "
-    ret += "YES" if not alarmrunning else "NO"
-    ret += "\nTelegram Mode: " + TG_MODE
-    ret += "\nAI Mode: " + AIMODE.upper()
-    ret += "\nAI Sens.: " + str(AISENS)
-    ret += "\nHCLIMIT: " + str(HCLIMIT)
-    ret += "\nNIGHTMODE: "
-    ret += "YES" if NIGHTMODE else "NO"'''
-    ret += "\n------- System -------"
-
-    # memory
-    overall_mem = round(psutil.virtual_memory()[0] / float(2 ** 20) / 1024, 2)
-    free_mem = round(psutil.virtual_memory()[1] / float(2 ** 20) / 1024, 2)
-    used_mem = round(overall_mem - free_mem, 2)
-    perc_used = round((used_mem / overall_mem) * 100, 2)
-    mem_crit = False
-    if perc_used > 85:
-        mem_crit = True
-
-    # cpu
-    cpu_perc0 = psutil.cpu_percent(interval=0.25, percpu=True)
-    cpu_avg = sum(cpu_perc0)/float(len(cpu_perc0))
-    cpu_perc = (max(cpu_perc0) * 0.6 + cpu_avg * 0.4)/2
-    cpu_crit = False
-    if cpu_perc > 0.8:
-        cpu_crit = True
-    ret += "\nRAM: " + str(perc_used) + "% ( =" + str(used_mem) + " GB) of overall " + str(overall_mem) + \
-           " GB used"
-    ret += "\nCPU: " + str(round(cpu_avg, 1)) + "% ("
-    for cpu0 in cpu_perc0:
-        ret += str(cpu0) + " "
-    ret += ")"
-
-    # sensors / cpu temp
-    sensors.init()
-    cpu_temp = []
-    for chip in sensors.iter_detected_chips():
-        for feature in chip:
-            if feature.label[0:4] == "Core":
-                temp0 = feature.get_value()
-                cpu_temp.append(temp0)
-                ret += "\nCPU " + feature.label + " temp.: " + str(round(temp0, 2)) + "°"
-    sensors.cleanup()
-    if len(cpu_temp) > 0:
-        avg_cpu_temp = sum(c for c in cpu_temp)/len(cpu_temp)
-    else:
-        avg_cpu_temp = 0
-    if avg_cpu_temp > 52.0:
-        cpu_crit = True
-    else:
-        cpu_crit = False
-
-    # gpu
-    if osversion == "Gentoo/Linux":
-        smifn = "/opt/bin/nvidia-smi"
-    else:
-        smifn = "/usr/bin/nvidia-smi"
-    try:
-        gputemp = subprocess.Popen([smifn, "--query-gpu=temperature.gpu", "--format=csv"],
-                                   stdout=subprocess.PIPE).stdout.readlines()[1]
-        gpuutil = subprocess.Popen([smifn, "--query-gpu=utilization.gpu", "--format=csv"],
-                                   stdout=subprocess.PIPE).stdout.readlines()[1]
-        gputemp_str = gputemp.decode("utf-8").rstrip()
-        gpuutil_str = gpuutil.decode("utf-8").rstrip()
-    except Exception:
-        gputemp_str = "0.0"
-        gpuutil_str = "0.0%"
-    ret += "\nGPU: " + gputemp_str + "°C" + " / " + gpuutil_str + " util."
-    if float(gputemp_str) > 70.0:
-        gpu_crit = True
-    else:
-        gpu_crit = False
-
-    cam_crit = False
-    if state_data.PD_ACTIVE:
-        ret += "\n------- Cameras -------"
-        for c in state_data.CAMERADATA:
-            cname, cframe, cfps, cisok, cactive, ctx = c
-            if not cactive:
-                ctstatus0 = "DISABLED"
-                ret += "\n" + cname + " " + ctstatus0
-            else:
-                try:
-                    dt = time.time() - ctx
-                except Exception:
-                    dt = 31
-                if dt > 30 or not cisok:
-                    ctstatus0 = "DOWN"
-                elif dt > 3:
-                    ctstatus0 = "DELAYED"
-                else:
-                    ctstatus0 = "running"
-                    if ctstatus0 in ["DOWN", "DELAYED"]:
-                        cam_crit = True
-                    else:
-                        cam_crit = False
-                ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
-
-    temp, hum = get_sens_temp()
-    ret += "\n------- Sensors -------"
-    ret += "\nTemperature:  " + "%.1f" % temp + "C"
-    ret += "\nHumidity: " + "%.1f" % hum + "%"
-    ret += "\n------- System Summary -------"
-    ret += "\nRAM: "
-    ret += "CRITICAL!" if mem_crit else "OK!"
-    ret += "\nCPU: "
-    ret += "CRITICAL!" if cpu_crit else "OK!"
-    ret += "\nGPU: "
-    ret += "CRITICAL!" if gpu_crit else "OK!"
-    ret += "\nCAMs: "
-    if state_data.PD_ACTIVE:
-        ret += "CRITICAL!" if cam_crit else "OK!"
-    else:
-        ret += "NOT RUNNING!"
-    return ret, mem_crit, cpu_crit, gpu_crit, cam_crit
-
-
 def run(startmode="systemd"):
     global TERMINATED
     global RESTART
@@ -768,7 +427,7 @@ def run(startmode="systemd"):
 
     # get camera data
     cfgr = ConfigReader(cfg)
-    state_data.CAMERA_CONFIG= cfgr.get_cameras()
+    state_data.CAMERA_CONFIG = cfgr.get_cameras()
     cfgr_net = NetConfigReader(cfg_net)
     state_data.NET_CONFIG = cfgr_net.get_config()
 
