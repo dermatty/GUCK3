@@ -115,6 +115,7 @@ def get_net_status(state_data):
         transport.send_ignore()
     except Exception:
         ssh = ssh_connect(state_data)
+        state_data.SSH = ssh
         if not ssh:
             ret += "\nCannot connect to pfsense box @ " + state_data.NET_CONFIG["host"]
     for if0 in state_data.NET_CONFIG["interfaces"]:
@@ -189,5 +190,7 @@ def get_net_status(state_data):
                             dt = "-"
             ret += "\n   Internet: " + ifstatus + " (ping from " + if0["interface_ip"] + " to 8.8.8.8 @ " + dt + "ms)"
         except Exception as e:
+            ssh = ssh_connect(state_data)
+            state_data.SSH = ssh
             ret += "\n   Internet: cannot detect, " + str(e) + " (ping from " + if0["interface_ip"] + " to 8.8.8.8)"
     return ret

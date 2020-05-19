@@ -438,7 +438,6 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
         time.sleep(0.02)
 
         mainmsglist = []
-
         for c in cameras:
             mainmsg = "status"
             mainparams = (c.cname, c.frame, c.get_fps(), c.isok, c.active, c.tx)

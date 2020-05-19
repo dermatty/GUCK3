@@ -178,4 +178,3 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
         tm.CAP.release()
 
     logger.info(whoami() + "... exited!")
-
