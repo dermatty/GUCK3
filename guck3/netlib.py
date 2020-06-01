@@ -90,21 +90,34 @@ def ifrestart(state_data, if0):
 def modemrestart(if0):
     host = if0["gateway_ip"]
     password = if0["gateway_pass"]
+    timeout0 = 10
+    # log in
     try:
-        tn = telnetlib.Telnet(host, timeout=5)
-        tn.read_until(b"password:", timeout=5)  # b'\r\r\npassword:'
+        tn = telnetlib.Telnet(host, timeout=timeout0)
+        tn.read_until(b"password:", timeout=timeout0)  # b'\r\r\npassword:'
         tn.write(password.encode("ascii") + b"\n")
-        tn.read_until(b"(conf)#", timeout=5)  # except EOFError as e, dann fail!!
+    except Exception as e:
+        return "modemrestart error: #1 - password / " + str(e)
+    # send cmd "dev reboot"
+    try:
+        tn.read_until(b"(conf)#", timeout=timeout0)  # except EOFError as e, dann fail!!
         tn.write(b"dev reboot\n")
         # tn.write(b"help\n")
         # tn.write(b"logout\n")
+    except Exception as e:
+        return "modemrestart error: #2 - dev reboot / " + str(e)
+    # read_all
+    try:
         ret = tn.read_all().decode('ascii')
+    except Exception as e:
+        return "modemrestart error: #3 - read_all / " + str(e)
+    try:
         if "dev reboot" in ret:
             return "executing 'dev reboot' on " + if0["name"]
         else:
             raise EOFError("telnet communication error!")
     except Exception as e:
-        return "modemrestart error: " + str(e)
+        return "modemrestart error: #4 - " + str(e)
 
 
 def get_net_status(state_data):
