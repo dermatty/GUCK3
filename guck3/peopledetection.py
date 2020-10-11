@@ -5,12 +5,13 @@ from guck3.mplogging import whoami
 from guck3 import mplogging, mpcam, clear_all_queues, ConfigReader
 import time
 import cv2
+import torch
+import torchvision
+from torchvision import transforms
+import PIL
 import multiprocessing as mp
 import signal
 import numpy as np
-from keras_retinanet import models
-from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize_image
-from keras import backend as K
 import sys
 import logging
 from datetime import datetime
@@ -36,22 +37,23 @@ class SigHandler_pd:
         self.logger.debug(whoami() + "got signal, exiting ...")
 
 
-class KerasRetinaNet:
+class TorchResNet:
     def __init__(self, dirs, cfgr, logger):
         self.logger = logger
         self.active = False
         self.cfgr = cfgr
         self.dirs = dirs
-        self.RETINA_PATH = self.dirs["main"] + self.cfgr.get_options()["retinanet_model"]
         old_sys_stdout = sys.stdout
         f = open('/dev/null', 'w')
         sys.stdout = f
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         try:
-            self.RETINAMODEL = models.load_model(self.RETINA_PATH, backbone_name='resnet50')
+            self.RESNETMODEL = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).to(self.device)
+            self.RESNETMODEL.eval()
             self.active = True
-            self.logger.info(whoami() + "RetinaNet initialized!")
+            self.logger.info(whoami() + "Torchvision Resnet initialized!")
         except Exception as e:
-            self.logger.error(whoami() + str(e) + ": cannot init RetinaNet!")
+            self.logger.error(whoami() + str(e) + ": cannot init Torchvision Resnet!")
         sys.stdout = old_sys_stdout
 
     def overlap_rects(self, r1, r2):
@@ -68,34 +70,57 @@ class KerasRetinaNet:
         overlapArea = x_overlap * y_overlap
         return overlapArea, overlapArea/area1, overlapArea/area2
 
+    def image_loader(self, img_cv2):
+        img_cv20 = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2RGB)
+        img = PIL.Image.fromarray(img_cv20)
+        transform = transforms.Compose([transforms.ToTensor()])
+        image = transform(img).to(self.device)
+        return image
+
     def get_cnn_classification(self, camera):
         if not self.active or not camera.active and camera.frame is not None:
             return
-        frame = camera.frame.copy()
-        cnn_classified_list = []
-        for x, y, w, h in camera.rects:
-            found = True
-            image = preprocess_image(frame)
-            image, scale = resize_image(image)
-            pred_boxes, pred_scores, pred_labels = self.RETINAMODEL.predict_on_batch(np.expand_dims(image, axis=0))
-            pred_boxes /= scale
-            found = False
-            for box, score, label in zip(pred_boxes[0], pred_scores[0], pred_labels[0]):
-                if label != 0 or score < 0.5:
-                    continue
-                b = box.astype(int)
-                r1 = (b[0], b[1], b[2], b[3])
-                r2 = (x, y, x + w, y + h)
-                overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
-                if (ratio1 > 0.70 or ratio2 > 0.70):
-                    self.logger.info(" Human detected with score " + str(score) + " and overlap " + str(ratio1) + " / " + str(ratio2))
-                    found = True
-                    break
-            if found:
-                cnn_classified_list.append(r1)
-                # cnn_classified_list.append((min(x, b[0]), min(y, b[1]), max(x + w, b[2]), max (y + h, b[3])))
-                self.logger.info(whoami() + "!! CLASSIFIED !!")
-        camera.cnn_classified_list = cnn_classified_list
+        if len(camera.rects) == 0:
+            return
+
+        try:
+            self.logger.debug(whoami() + "resnet classification with " + str(len(camera.rects)) + " detections started ...")
+            img0 = self.image_loader(camera.frame.copy())
+
+            pred = self.RESNETMODEL([img0])[0]
+
+            boxes = pred["boxes"].to("cpu").tolist()
+            labels = pred["labels"].to("cpu").tolist()
+            scores = pred["scores"].to("cpu").tolist()
+            
+            cnn_classified_list = []
+            for x, y, w, h in camera.rects:
+                found = False
+                for i, label in enumerate(labels):
+                    if label != 1 or scores[i] < 0.5:
+                        continue
+                    score = scores[i]
+                    box = boxes[i]
+                    x1_det = int(box[0])
+                    y1_det = int(box[1])
+                    x2_det = int(box[2])
+                    y2_det = int(box[3])
+                    x_det_w = x2_det - x1_det
+                    y_det_h = y2_det - y1_det
+                    r1 = (x1_det, y1_det, x2_det, y2_det)
+                    r2 = (x, y, x + w, y + h)
+                    overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
+                    if (ratio1 > 0.70 or ratio2 > 0.70):
+                        self.logger.info(" Human detected with score " + str(score) + " and overlap " + str(ratio1) + " / " + str(ratio2))
+                        found = True
+                        break
+                if found:
+                    cnn_classified_list.append((x1_det, y1_det, x_det_w, y_det_h))
+                    self.logger.info(whoami() + "!! CLASSIFIED !!")
+            camera.cnn_classified_list = cnn_classified_list
+        except Exception as e:
+            self.logger.error(whoami() + str(e) + ": ResNet classification error!")
+            camera.cnn_classified_list = []
         return
 
 
@@ -386,8 +411,6 @@ def stop_all_recordings(cameras):
 def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     global TERMINATED
 
-    K.clear_session()
-
     setproctitle("g3." + os.path.basename(__file__))
 
     # tf.get_logger().setLevel('INFO')
@@ -425,7 +448,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     else:
         pd_outqueue.put(("allok", None))
 
-    kreta = KerasRetinaNet(dirs, cfgr, logger)
+    torchresnet = TorchResNet(dirs, cfgr, logger)
     try:
         showframes = (options["showframes"].lower() == "yes")
     except Exception:
@@ -444,7 +467,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
             if c.active and c.isok:
                 try:
                     if c.newframe:
-                        kreta.get_cnn_classification(c)
+                        torchresnet.get_cnn_classification(c)
                         c.draw_detections(cnn=True)
                         mainparams = (c.cname, c.frame, c.get_fps(), c.isok, c.active, c.tx)
                         if showframes:
