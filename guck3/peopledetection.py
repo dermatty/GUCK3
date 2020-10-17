@@ -83,7 +83,7 @@ class TorchResNet:
            (len(camera.rects) == 0 or self.RESNETMODEL is None):
             return []
         try:
-            self.logger.debug(whoami() + "resnet classification with " + str(len(camera.rects)) + " detections started ...")
+            self.logger.debug(whoami() + "performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
             img0 = self.image_loader(camera.frame.copy())
 
             pred = self.RESNETMODEL([img0])[0]
@@ -94,30 +94,25 @@ class TorchResNet:
             
             cnn_classified_list = []
             for x, y, w, h in camera.rects:
-                found = False
-                humanlist = []
+                r2 = (x, y, x + w, y + h)
                 for i, label in enumerate(labels):
-                    score = scores[i]
-                    if label == 1 and score >= 0.5:
-                        box = boxes[i]
-                        x1_det = int(box[0])
-                        y1_det = int(box[1])
-                        x2_det = int(box[2])
-                        y2_det = int(box[3])
-                        x_det_w = x2_det - x1_det
-                        y_det_h = y2_det - y1_det
-                        humanlist.append((x1_det, y1_det, x_det_w, y_det_h))
-                for h in humanlist:
-                    x1_det, y1_det, x_det_w, y_det_h = h
+                    if label != 1 or scores[i] < 0.5:
+                        continue
+                    box = boxes[i]
+                    x1_det = int(box[0])
+                    y1_det = int(box[1])
+                    x2_det = int(box[2])
+                    y2_det = int(box[3])
+                    x_det_w = x2_det - x1_det
+                    y_det_h = y2_det - y1_det
                     r1 = (x1_det, y1_det, x2_det, y2_det)
-                    r2 = (x, y, x + w, y + h)
                     overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
-                    if (ratio1 > 0.70 or ratio2 > 0.70):
-                        self.logger.info(" Human detected with score " + str(score) + " and overlap " + str(ratio1) + " / " + str(ratio2))
-                        for h in humanlist:
-                            cnn_classified_list.append(h)
-                            self.logger.info(whoami() + "!! CLASSIFIED !!")
-                        break
+                    if (ratio1 > 0.5 or ratio2 > 0.5):
+                        self.logger.info(" Human detected with score " + str(scores[i]) + " and overlap " + str(ratio1) + " / " + str(ratio2))
+                        cnn_classified_list.append((x1_det, y1_det, x_det_w, y_det_h))
+                        self.logger.info(whoami() + "!! CLASSIFIED !!")
+                    else:
+                        self.logger.info("Detection refused with score " + str(scores[i]) + " and ratios " + str(ratio1) + " / " + str(ratio2) + " !")
             camera.cnn_classified_list = cnn_classified_list
         except Exception as e:
             self.logger.error(whoami() + str(e) + ": ResNet classification error!")
