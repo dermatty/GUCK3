@@ -361,46 +361,6 @@ def photos():
     return render_template('photos.html', detlist=detlist)
 
 
-# -------------- livecam --------------
-@app.route('/video_feed/<camnr>')
-def video_feed(camnr):
-    return Response(gen(Camera(int(camnr)-1, RED)), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
-@app.route("/livecam", defaults={"camnrstr": 0, "ptz": 0}, methods=['GET', 'POST'])
-@app.route("/livecam/<camnrstr>", defaults={"ptz": 0}, methods=['GET', 'POST'])
-@app.route("/livecam/<camnrstr>/<ptz>", methods=['GET', 'POST'])
-@flask_login.login_required
-def livecam(camnrstr=0, ptz=0):
-    if request.method == "GET":
-        ptz0 = int(ptz)
-        camnr = int(camnrstr)
-        cameradata = RED.get_cameras()
-        cameralist = [(cd["name"], cd["photo_url"], cd["stream_url"]) for cd in cameradata]
-        if ptz0 != 0 and len(cameralist)-1 >= camnr:
-            ptzlist = [(cd["ptz_up_url"], cd["ptz_down_url"], cd["ptz_left_url"], cd["ptz_right_url"], cd["ptz_mode"])
-                       for cd in cameradata]
-            ptz_up, ptz_down, ptz_left, ptz_right, ptzmode = ptzlist[camnr]
-            if ptzmode.lower() != "none":
-                ptzcommand = ""
-                if ptz0 == 1:
-                    ptzcommand = ptz_up
-                elif ptz0 == 2:
-                    ptzcommand = ptz_down
-                elif ptz0 == 3:
-                    ptzcommand = ptz_left
-                elif ptz0 == 4:
-                    ptzcommand = ptz_right
-                if ptzcommand != "":
-                    try:
-                        requests.get(ptzcommand)
-                    except Exception as e:
-                        app.logger.warning(whoami() + str(e))
-        return render_template("livecam.html", cameralist=cameralist, camnr=camnr+1, ptz=0)
-    elif request.method == "POST":
-        pass
-
-
 # -------------- StandaloneApplication/main --------------
 
 

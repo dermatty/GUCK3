@@ -270,10 +270,6 @@ def check_cfg_file(cfgfile):
         assert cfg["OPTIONS"]["SHOWFRAMES"].lower() in ["yes", "no"]
     except Exception:
         return "error in cfg file [OPTIONS][SHOWFRAMES]!", False
-    try:
-        assert cfg["OPTIONS"]["RETINANET_MODEL"]
-    except Exception:
-        return "error in cfg file [OPTIONS][RETINANET_MODEL]!", False
     # no check for ["OPTIONS"]["ADDTL_PHOTO_PATH"] cause it iss optional
     # TELEGRAM
     try:
