@@ -10,6 +10,7 @@ import psutil
 import time
 import urllib.request
 from guck3.mplogging import whoami
+from guck3.netlib import get_net_status
 import base64
 import numpy as np
 import datetime
@@ -435,6 +436,8 @@ def get_status(state_data):
                     else:
                         cam_crit = False
                 ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
+
+    ret += "\n" + get_net_status(state_data)
 
     temp, hum = get_sens_temp()
     ret += "\n------- Sensors -------"

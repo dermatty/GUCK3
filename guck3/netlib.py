@@ -121,7 +121,7 @@ def modemrestart(if0):
 
 
 def get_net_status(state_data):
-    ret = "------- Net Status -------"
+    ret = "------- Network Status -------"
     ssh = state_data.SSH
     try:
         transport = ssh.get_transport()
