@@ -185,11 +185,14 @@ class RedisAPI:
 
     def insert_photodata(self, photonames):
         photodata = self.getp("g3_photodata")
-        for p in photonames:
-            photodata.insert(0, p)
-            if len(photodata) > 50:
-                del photodata[-1]
-        self.setp("g3_photodata", photodata)
+        try:
+            for p in photonames:
+                photodata.insert(0, p)
+                if len(photodata) > 50:
+                    del photodata[-1]
+            self.setp("g3_photodata", photodata)
+        except Exception as e:
+            self.logger.error(whoami() + str(e) + ", cannot insert photodata!")
 
     def get_users(self):
         return self.getp("g3_users")
