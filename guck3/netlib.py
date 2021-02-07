@@ -188,7 +188,7 @@ def get_net_status(state_data):
                 if err:
                     ifstatus = "down"
                     break
-            # check stdout if ok
+            # check stdout if ok - OK
             dt = "-"
             if ifstatus == "up":
                 ifstatus = "down"
