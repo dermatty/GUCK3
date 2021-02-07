@@ -161,16 +161,16 @@ def get_net_status(state_data):
             # print(">> stderr >>", if0["name"], resp_stderr)
             for err in resp_stderr:
                 if err.decode("utf-8"):
-                    gw_status = "down"
+                    gw_status = "down-" + str(err.decode("utf-8"))
                     break
             if gw_status == "up":
                 gw_status = "down"
                 for std in resp_stdout:
                     std0 = std.decode("utf-8")
-                    if "1 received" in std0:
+                    if "1 packets received" or "1 empfangen" in std0:
                         gw_status = "up"
                         break
-            ret += "\n   Modem:  " + gw_status + " (ping to " + if0["gateway_ip"] + ")"
+            ret += "\n   Modem: " + gw_status + " (ping to " + if0["gateway_ip"] + ")"
         except Exception as e:
             ret += "\n   Modem:   cannot detect, " + str(e) + " (ping to " + if0["gateway_ip"] + ")"
         if not ssh:
@@ -193,7 +193,7 @@ def get_net_status(state_data):
             if ifstatus == "up":
                 ifstatus = "down"
                 for std in resp_stdout:
-                    if ("1 packets received" in std) and ("0.0%" in std):
+                    if ("1 packets received" in std or "1 empfangen" in std) and ("0.0%" in std):
                         ifstatus = "up"
                     if "round-trip" in std:
                         try:
