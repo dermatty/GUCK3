@@ -18,7 +18,7 @@ chardet==4.0.0
 chrome-gnome-shell==0.0.0
 click==7.1.2
 cracklib==2.9.7
-cryptography==3.3.1
+cryptography==3.3.2
 cupshelpers==1.0
 Cython==0.29.21
 dataclasses==0.6
