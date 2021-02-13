@@ -318,9 +318,12 @@ def get_sens_temp(hostn="raspisens", filen="/home/pi/sens.txt"):
     temp = 0
     hum = 0
     for s in sshres:
-        s0 = s.decode("utf-8").split(" ")
-        temp += float(s0[2])
-        hum += float(s0[3])
+        try:
+            s0 = s.decode("utf-8").split(" ")
+            temp += float(s0[2])
+            hum += float(s0[3])
+        except Exception:
+            pass
         n += 1
     if n > 0:
         temp = temp / n
