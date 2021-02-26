@@ -1,4 +1,4 @@
-aiohttp==3.7.3
+aiohttp==3.7.4
 aiohttp-socks==0.5.5
 aiorpcX==0.18.5
 appdirs==1.4.4
