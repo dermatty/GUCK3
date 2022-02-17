@@ -467,8 +467,8 @@ def run(startmode="systemd"):
     # WebServer
     try:
         webflask.REDISCLIENT.ping()
-    except Exception:
-        logger.error(whoami() + "cannot start webserver due to redis server not available, exiting")
+    except Exception as e:
+        logger.error(whoami() + str(e) + ": cannot start webserver due to redis server not available, exiting")
         sh.shutdown()
         return -1
     state_data.mpp_webflask = mp.Process(target=webflask.main, args=(cfg, dirs, state_data.WF_OUTQUEUE,
