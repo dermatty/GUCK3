@@ -48,7 +48,7 @@ gdbus-codegen==2.68.2
 gemato==16.2
 gentoolkit==0.5.1
 gevent==21.1.2
-Glances==3.1.7
+Glances==3.2.1
 gpg==1.14.0
 greenlet==1.1.0
 gunicorn==20.1.0
