@@ -154,7 +154,7 @@ torchaudio==0.8.1
 torchvision==0.9.1+cu111
 tornado==6.1
 traceback2==1.4.0
-Twisted==21.2.0
+Twisted==22.1.0
 typing-extensions==3.10.0.0
 tzlocal==2.1
 unittest2==1.1.0
