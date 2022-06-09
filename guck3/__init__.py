@@ -395,7 +395,7 @@ def get_status(state_data):
         cpu_crit = False
 
     # gpu
-    if osversion == "Gentoo/Linux":
+    if osversion == "Gentoo Linux":
         smifn = "/opt/bin/nvidia-smi"
     else:
         smifn = "/usr/bin/nvidia-smi"
@@ -406,7 +406,7 @@ def get_status(state_data):
                                    stdout=subprocess.PIPE).stdout.readlines()[1]
         gputemp_str = gputemp.decode("utf-8").rstrip()
         gpuutil_str = gpuutil.decode("utf-8").rstrip()
-    except Exception:
+    except Exception as e:
         gputemp_str = "0.0"
         gpuutil_str = "0.0%"
     ret += "\nGPU: " + gputemp_str + "°C" + " / " + gpuutil_str + " util."
