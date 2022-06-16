@@ -1,0 +1,17 @@
+# useless python libs that are auto-included in requirements.tx but are not needed for g3
+#APScheduler==3.9.1
+#bsddb3==6.2.9
+#berkeleydb
+#cachetools==5.2.0
+#docutils==0.18.1
+#elogv ==0.7.9
+#gdbus_codegen==2.72.1
+#gentoolkit==0.5.1.post1
+#include_server==3.4
+#java-config==2.3.1
+#layman==2.4.3
+#netsnmp-python==1.0a1
+#portage==3.0.30
+#repoman==3.0.3
+#seccomp==2.5.4
+#ssl-fetch==0.4
