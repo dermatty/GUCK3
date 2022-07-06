@@ -48,7 +48,7 @@ jaraco.classes==3.2.1
 jaraco.collections==3.5.1
 jaraco.text==3.8.0
 Jinja2==3.1.2
-lxml==4.9.0
+lxml==4.9.1
 Mako==1.2.0
 Markdown==3.3.7
 MarkupSafe==2.1.1
