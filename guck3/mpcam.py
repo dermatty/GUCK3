@@ -74,6 +74,7 @@ class NewMatcher:
     def __init__(self, cfg, logger):
         self.logger = logger
         self.SURL = cfg["stream_url"]
+        self.IsRTSP = (self.SURL[0:4].lower() == "rtsp")
         self.NAME = cfg["name"]
         self.YMAX0 = self.XMAX0 = None
         self.MINAREA = cfg["min_area_rect"]
@@ -82,6 +83,8 @@ class NewMatcher:
         self.HIST = 800 + (5 - self.MOG2SENS) * 199
         self.KERNEL2 = cv2.getStructuringElement(cv2.MORPH_RECT, (24, 24))
         self.NIGHTMODE = False
+        if self.IsRTSP:
+        	os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;udp'
         self.setFGBGMOG2()
 
     def setFGBGMOG2(self):
@@ -96,38 +99,69 @@ class NewMatcher:
         self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, dist2Threshold=vart, detectShadows=True)
         return
 
-    def waitforcaption(self):
+    def OpenVideoCapture(self):
         ret = False
         for i in range(10):
-            self.CAP = cv2.VideoCapture(self.SURL)
-            ret, frame = self.CAP.read()
-            if ret:
-                self.YMAX0, self.XMAX0 = frame.shape[:2]
-                break
+            if not self.CAP:
+               try:
+                  self.CAP = cv2.VideoCapture(self.SURL, cv2.CAP_FFMPEG)
+               except:
+                  pass
+            if self.CAP.isOpened():
+               ret = True
+               break
             time.sleep(0.1)
+        return ret
+
+    def get_caption(self):
+        ret = False
+        frame = False
+        for i in range(10):
+            try:
+               ret, frame = self.CAP.read()
+               if ret:
+               	  break
+            except Exception as e:
+               self.logger.error(whoami() + "Cannot read frame for " + self.NAME + ": " + str(e))
+            time.sleep(0.1)
+        return ret, frame            	
+
+    def waitforcaption(self):
+        ret = self.OpenVideoCapture()
+        if not ret:
+           return False
+        ret, frame = self.get_caption()
+        if ret:
+           self.YMAX0, self.XMAX0 = frame.shape[:2]
         return ret
 
     def get_caption_and_process(self):
         if not self.CAP:
-            self.CAP = cv2.VideoCapture(self.SURL, cv2.CAP_FFMPEG)
-        ret, frame = self.CAP.read()
-        if ret:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            fggray = self.FGBG.apply(gray, 1 / self.HIST)
-            fggray = cv2.medianBlur(fggray, 5)
-            edged = auto_canny(fggray)
-            closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, self.KERNEL2)
-            if CVMAJOR == "4":
-                cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            else:
-                _, cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cnts0 = [cv2.boundingRect(c) for c in cnts]
-            rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
-            return ret, rects, frame
+            ret = self.OpenVideoCapture()
         else:
-            return ret, None, None
-
-
+            ret = True
+        if ret:
+            ret, frame = self.get_caption()
+            if not ret:
+               return False, None, None
+        else:
+            return False, None, None
+        try:
+           gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+           fggray = self.FGBG.apply(gray, 1 / self.HIST)
+           fggray = cv2.medianBlur(fggray, 5)
+           edged = auto_canny(fggray)
+           closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, self.KERNEL2)
+           if CVMAJOR == "4":
+              cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+           else:
+              _, cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+           cnts0 = [cv2.boundingRect(c) for c in cnts]
+           rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
+           return ret, rects, frame
+        except Exception:
+           return False, None, None
+        
 def run_cam(cfg, child_pipe, mp_loggerqueue):
     global CNAME
     global CVMAJOR
@@ -171,7 +205,8 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
                 child_pipe.send(exp0)
         except Exception as e:
             logger.error(whoami() + str(e))
-            exp0 = (ret, None, [], None)
+            print(str(e))
+            exp0 = (False, None, [], None)
             child_pipe.send(exp0)
 
     if tm.CAP:
