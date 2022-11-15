@@ -42,7 +42,7 @@ more-itertools==8.14.0
 numpy==1.23.3
 paramiko==2.11.0
 pbr==5.10.0
-Pillow==9.2.0
+Pillow==9.3.0
 platformdirs==2.5.2
 portage==3.0.38
 psutil==5.9.2
