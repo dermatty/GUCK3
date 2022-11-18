@@ -7,6 +7,10 @@ import signal
 import numpy as np
 import sys
 import inspect
+from threading import Thread
+import threading
+import time
+import queue
 
 CNAME = None
 CVMAJOR = "4"
@@ -70,11 +74,12 @@ class Detection:
         return
 
 
-class NewMatcher:
+class NewMatcherThread(Thread):
     def __init__(self, cfg, logger):
+        Thread.__init__(self)
+        self.lock = threading.Lock()
         self.logger = logger
         self.SURL = cfg["stream_url"]
-        self.IsRTSP = (self.SURL[0:4].lower() == "rtsp")
         self.NAME = cfg["name"]
         self.YMAX0 = self.XMAX0 = None
         self.MINAREA = cfg["min_area_rect"]
@@ -83,10 +88,68 @@ class NewMatcher:
         self.HIST = 800 + (5 - self.MOG2SENS) * 199
         self.KERNEL2 = cv2.getStructuringElement(cv2.MORPH_RECT, (24, 24))
         self.NIGHTMODE = False
-        if self.IsRTSP:
-        	os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;udp'
         self.setFGBGMOG2()
+        self.running = False
+        self.startup = True
+        self.ret = False
+        self.frame = None
+        self.waitt = 0.01
+        self.MAXFPS = 8
+        self.queue = queue.Queue()
 
+    def OpenVideoCapture(self):
+        ret = False
+        self.startup = True
+        self.CAP = None
+        for i in range(10):
+            if not self.CAP:
+               try:
+                  self.CAP = cv2.VideoCapture(self.SURL, cv2.CAP_FFMPEG)
+                  self.YMAX0, self.XMAX0 = frame.shape[:2]
+               except:
+                  pass
+            if self.CAP.isOpened():
+                ret = True
+                break
+            time.sleep(0.1)
+        self.startup = False
+        return ret
+
+
+    def run(self):
+        ret = self.OpenVideoCapture()
+        self.running = True
+        if not ret:
+            self.CAP = None
+            self.running = False
+        oldt = time.time()
+        while self.running:
+            if not self.startup:
+                try:
+                    ret, frame = self.CAP.read()
+                    if ret:
+                        self.queue.put(frame)
+                    newt = time.time()
+                    fps = 1 / (newt - oldt)
+                    if fps > self.MAXFPS:
+                        self.waitt += 0.01
+                    elif fps < self.MAXFPS and self.waitt >= 0.02:
+                        self.waitt -= 0.01
+                    oldt = newt
+                except Exception as e:
+                    self.logger.error(whoami() + "Cannot grab frame for " + self.NAME + ": " + str(e))
+                    self.ret = False
+                if not ret:
+                    self.running = False
+            if not self.running:
+                time.sleep(self.waitt)
+        if self.CAP:
+            self.CAP.release()    
+                            
+    def stop(self):
+        self.running = False
+        self.startup = True
+        
     def setFGBGMOG2(self):
         ms = self.MOG2SENS
         if not self.NIGHTMODE:
@@ -99,53 +162,21 @@ class NewMatcher:
         self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, dist2Threshold=vart, detectShadows=True)
         return
 
-    def OpenVideoCapture(self):
-        ret = False
-        for i in range(10):
-            if not self.CAP:
-               try:
-                  self.CAP = cv2.VideoCapture(self.SURL, cv2.CAP_FFMPEG)
-               except:
-                  pass
-            if self.CAP.isOpened():
-               ret = True
-               break
-            time.sleep(0.1)
-        return ret
-
-    def get_caption(self):
-        ret = False
-        frame = False
-        for i in range(10):
-            try:
-               ret, frame = self.CAP.read()
-               if ret:
-               	  break
-            except Exception as e:
-               self.logger.error(whoami() + "Cannot read frame for " + self.NAME + ": " + str(e))
-            time.sleep(0.1)
-        return ret, frame            	
-
-    def waitforcaption(self):
-        ret = self.OpenVideoCapture()
-        if not ret:
-           return False
-        ret, frame = self.get_caption()
-        if ret:
-           self.YMAX0, self.XMAX0 = frame.shape[:2]
-        return ret
 
     def get_caption_and_process(self):
-        if not self.CAP:
-            ret = self.OpenVideoCapture()
-        else:
-            ret = True
-        if ret:
-            ret, frame = self.get_caption()
-            if not ret:
-               return False, None, None
-        else:
-            return False, None, None
+        frame = None
+        ret = False
+        while True and self.running:
+            try:
+                frame = self.queue.get_nowait()
+                ret = True
+            except queue.Empty:
+                if ret:
+                    break
+            time.sleep(0.05)
+
+        if not ret:
+            return False, None, None, time.time()
         try:
            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
            fggray = self.FGBG.apply(gray, 1 / self.HIST)
@@ -158,9 +189,9 @@ class NewMatcher:
               _, cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
            cnts0 = [cv2.boundingRect(c) for c in cnts]
            rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
-           return ret, rects, frame
+           return ret, rects, frame, time.time()
         except Exception:
-           return False, None, None
+           return False, None, None, time.time()
         
 def run_cam(cfg, child_pipe, mp_loggerqueue):
     global CNAME
@@ -180,15 +211,19 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     signal.signal(signal.SIGINT, sh.sighandler_mpcam)
     signal.signal(signal.SIGTERM, sh.sighandler_mpcam)
 
-    tm = NewMatcher(cfg, logger)
-
-    cam_is_ok = tm.waitforcaption()
+    tm = NewMatcherThread(cfg, logger)
+    tm.start()
+    while tm.startup:
+        time.sleep(0.03)
     child_pipe.recv()
-    child_pipe.send((cam_is_ok, tm.YMAX0, tm.XMAX0))
-    if not cam_is_ok:
+    child_pipe.send((tm.running, tm.YMAX0, tm.XMAX0))
+    if not tm.running:
         logger.error(whoami() + "cam is not working, aborting ...")
         sys.exit()
 
+    waitnext = 0.01
+    oldt = time.time()
+    MAXFPS = 8
     while True:
         try:
             cmd = child_pipe.recv()
@@ -196,20 +231,21 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
                 child_pipe.send(("stopped!", None))
                 break
             if cmd == "query":
-                ret, rects, frame = tm.get_caption_and_process()
+                ret, rects, frame, t0 = tm.get_caption_and_process()
                 if ret:
-                    exp0 = (ret, frame, rects, time.time())
+                    exp0 = (ret, frame, rects, t0)
+                    child_pipe.send(exp0)
                 else:
-                    logger.error(whoami() + "Couldn't capture frame!")
+                    logger.error(whoami() + "Couldn't capture frame in main loop!")
                     exp0 = (ret, None, [], None)
-                child_pipe.send(exp0)
+                    child_pipe.send(exp0)
+                    continue
         except Exception as e:
             logger.error(whoami() + str(e))
-            print(str(e))
             exp0 = (False, None, [], None)
             child_pipe.send(exp0)
 
-    if tm.CAP:
-        tm.CAP.release()
+    tm.stop()
+    tm.join()
 
     logger.info(whoami() + "... exited!")
