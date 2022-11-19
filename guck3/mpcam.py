@@ -93,8 +93,6 @@ class NewMatcherThread(Thread):
         self.startup = True
         self.ret = False
         self.frame = None
-        self.waitt = 0.01
-        self.MAXFPS = 8
         self.queue = queue.Queue()
 
     def OpenVideoCapture(self):
@@ -122,34 +120,26 @@ class NewMatcherThread(Thread):
         if not ret:
             self.CAP = None
             self.running = False
-        oldt = time.time()
         while self.running:
             if not self.startup:
                 try:
-                    ret, frame = self.CAP.read()
+                    with self.lock:
+                        ret, frame = self.CAP.read()
                     if ret:
                         self.queue.put(frame)
-                    newt = time.time()
-                    fps = 1 / (newt - oldt)
-                    if fps > self.MAXFPS:
-                        self.waitt += 0.01
-                    elif fps < self.MAXFPS and self.waitt >= 0.02:
-                        self.waitt -= 0.01
-                    oldt = newt
                 except Exception as e:
                     self.logger.error(whoami() + "Cannot grab frame for " + self.NAME + ": " + str(e))
-                    self.ret = False
+                    ret = False
                 if not ret:
                     self.running = False
-            if not self.running:
-                time.sleep(self.waitt)
-        if self.CAP:
-            self.CAP.release()    
-                            
+                                        
     def stop(self):
         self.running = False
         self.startup = True
-        
+        with self.lock:
+            if self.CAP:
+                self.CAP.release()    
+
     def setFGBGMOG2(self):
         ms = self.MOG2SENS
         if not self.NIGHTMODE:
@@ -173,7 +163,7 @@ class NewMatcherThread(Thread):
             except queue.Empty:
                 if ret:
                     break
-            time.sleep(0.05)
+            time.sleep(0.01)
 
         if not ret:
             return False, None, None, time.time()
@@ -221,7 +211,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
         logger.error(whoami() + "cam is not working, aborting ...")
         sys.exit()
 
-    waitnext = 0.01
+    waitnext = 0.005
     oldt = time.time()
     MAXFPS = 8
     while True:
@@ -235,6 +225,14 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
                 if ret:
                     exp0 = (ret, frame, rects, t0)
                     child_pipe.send(exp0)
+                    fps = 1 / (t0 - oldt)
+                    if fps > MAXFPS:
+                        waitnext += 0.005
+                    elif fps < MAXFPS and waitnext > 0.005:
+                        waitnext -= 0.005
+                    oldt = t0
+                    time.sleep(waitnext)
+                    # print(fps, waitnext)
                 else:
                     logger.error(whoami() + "Couldn't capture frame in main loop!")
                     exp0 = (ret, None, [], None)
@@ -248,4 +246,4 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     tm.stop()
     tm.join()
 
-    logger.info(whoami() + "... exited!")
+    logger.info(whoami() + tm.NAME + " exited!")
