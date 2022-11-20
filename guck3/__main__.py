@@ -616,7 +616,7 @@ def run(startmode="systemd"):
                 if state_data.mpp_peopledetection:
                     if state_data.mpp_peopledetection.pid:
                         state_data.PD_OUTQUEUE.put(("stop", None))
-                        state_data.mpp_peopledetection.join()
+                        state_data.mpp_peopledetection.join(timeout=5)
                         if state_data.mpp_peopledetection.is_alive():
                             os.kill(state_data.mpp_peopledetection.pid, signal.SIGTERM)
                         state_data.mpp_peopledetection = None
