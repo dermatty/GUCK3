@@ -199,15 +199,15 @@ class Camera(Thread):
                 ret, _ = self.parent_pipe.recv()
                 self.mpp.join(5)
                 if self.mpp.is_alive():
-                    os.kill(self.mpp.pid, signal.SIGKILL)
+                    os.kill(self.mpp.pid, signal.SIGTERM)
             else:
                 if self.mpp:
                     if self.mpp.is_alive():
-                        os.kill(self.mpp.pid, signal.SIGKILL)
+                        os.kill(self.mpp.pid, signal.SIGTERM)
         except Exception:
             if self.mpp:
                 if self.mpp.is_alive():
-                    os.kill(self.mpp.pid, signal.SIGKILL)
+                    os.kill(self.mpp.pid, signal.SIGTERM)
         self.mpp = None
         self.logger.debug(whoami() + "camera " + self.cname + " mpp stopped!")
         try:
@@ -306,6 +306,8 @@ class Camera(Thread):
             self.rects = rects
         self.shutdown()
         self.shutdown_completed = True
+        self.logger.debug(whoami() + ": camera " + self.cname + " - thread completed!")
+
 
     def get_new_detections(self, cnn=True):
         if cnn:
@@ -367,10 +369,10 @@ class Camera(Thread):
 
 
 def shutdown_cams(cameras):
+    
     for c in cameras:
         if c.active:
-            c.stop()
-
+            c.stop()            
 
 def startup_cams(cameras):
     for c in cameras:
@@ -384,7 +386,7 @@ def startup_cams(cameras):
 def stop_cams(cameras):
     for c in cameras:
         c.stop()
-
+        
 
 def destroy_all_cam_windows(cameras):
     for c in cameras:

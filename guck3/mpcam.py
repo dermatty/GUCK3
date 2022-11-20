@@ -15,7 +15,6 @@ import queue
 CNAME = None
 CVMAJOR = "4"
 
-
 def whoami():
     outer_func_name = str(inspect.getouterframes(inspect.currentframe())[1].function)
     outer_func_linenr = str(inspect.currentframe().f_back.f_lineno)
@@ -46,12 +45,14 @@ def overlap_rects(r1, r2):
 
 
 class SigHandler_mpcam:
-    def __init__(self, logger):
+    def __init__(self, event_stopped, logger):
         self.logger = logger
+        self.event_stopped = event_stopped
 
     def sighandler_mpcam(self, a, b):
-        pass
-
+        print("GAGA")
+        self.event_stopped.set()
+        self.logger.debug(whoami() + "set event_stopped = True")
 
 class Detection:
     def __init__(self, id, frame, t, rect, descr, cd, ca):
@@ -197,7 +198,8 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     logger = mplogging.setup_logger(mp_loggerqueue, __file__)
     logger.info(whoami() + "starting ...")
 
-    sh = SigHandler_mpcam(logger)
+    event_stopped = threading.Event()
+    sh = SigHandler_mpcam(event_stopped, logger)
     signal.signal(signal.SIGINT, sh.sighandler_mpcam)
     signal.signal(signal.SIGTERM, sh.sighandler_mpcam)
 
@@ -214,7 +216,8 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     waitnext = 0.005
     oldt = time.time()
     MAXFPS = 8
-    while True:
+
+    while not event_stopped.is_set():
         try:
             cmd = child_pipe.recv()
             if cmd == "stop":
