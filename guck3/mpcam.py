@@ -50,7 +50,6 @@ class SigHandler_mpcam:
         self.event_stopped = event_stopped
 
     def sighandler_mpcam(self, a, b):
-        print("GAGA")
         self.event_stopped.set()
         self.logger.debug(whoami() + "set event_stopped = True")
 
@@ -95,6 +94,7 @@ class NewMatcherThread(Thread):
         self.ret = False
         self.frame = None
         self.queue = queue.Queue()
+        self.frame_grabbed = threading.Event()
 
     def OpenVideoCapture(self):
         ret = False
@@ -125,14 +125,19 @@ class NewMatcherThread(Thread):
             if not self.startup:
                 try:
                     with self.lock:
-                        ret, frame = self.CAP.read()
-                    if ret:
-                        self.queue.put(frame)
+                        ret = self.CAP.grab()
+                        if ret:
+                            self.frame_grabbed.set()
+                    #with self.lock:                        
+                    #    ret, frame = self.CAP.read()
+                    #if ret:
+                    #    self.queue.put(frame)
                 except Exception as e:
                     self.logger.error(whoami() + "Cannot grab frame for " + self.NAME + ": " + str(e))
                     ret = False
                 if not ret:
                     self.running = False
+                time.sleep(0.01)
                                         
     def stop(self):
         self.running = False
@@ -155,16 +160,19 @@ class NewMatcherThread(Thread):
 
 
     def get_caption_and_process(self):
-        frame = None
-        ret = False
-        while True and self.running:
-            try:
-                frame = self.queue.get_nowait()
-                ret = True
-            except queue.Empty:
-                if ret:
-                    break
-            time.sleep(0.01)
+        ret = self.frame_grabbed.wait(2)
+        if ret:
+            with self.lock:
+                ret, frame = self.CAP.retrieve()
+                self.frame_grabbed.clear()                
+        #while True and self.running:
+        #    try:
+        #        frame = self.queue.get_nowait()
+        #        ret = True
+        #    except queue.Empty:
+        #        if ret:
+        #            break
+        #    time.sleep(0.01)
 
         if not ret:
             return False, None, None, time.time()
@@ -174,15 +182,13 @@ class NewMatcherThread(Thread):
            fggray = cv2.medianBlur(fggray, 5)
            edged = auto_canny(fggray)
            closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, self.KERNEL2)
-           if CVMAJOR == "4":
-              cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-           else:
-              _, cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+           cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
            cnts0 = [cv2.boundingRect(c) for c in cnts]
            rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
            return ret, rects, frame, time.time()
-        except Exception:
-           return False, None, None, time.time()
+        except Exception as e:
+            self.logger.warning(whoami() + str(e))
+            return False, None, None, time.time()
         
 def run_cam(cfg, child_pipe, mp_loggerqueue):
     global CNAME
