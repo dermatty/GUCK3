@@ -14,12 +14,12 @@ import queue
 
 CNAME = None
 CVMAJOR = "4"
+TERMINATED = False
 
 def whoami():
     outer_func_name = str(inspect.getouterframes(inspect.currentframe())[1].function)
     outer_func_linenr = str(inspect.currentframe().f_back.f_lineno)
     return outer_func_name + " " + CNAME + " / #" + outer_func_linenr + ": "
-
 
 def auto_canny(image, sigma=0.33):
     v = np.median(image)
@@ -29,29 +29,14 @@ def auto_canny(image, sigma=0.33):
     return edged
 
 
-def overlap_rects(r1, r2):
-    x11, y11, w, h = r1
-    x12 = x11 + w
-    y12 = y11 + h
-    area1 = w * h
-    x21, y21, w, h = r2
-    x22 = x21 + w
-    y22 = y21 + h
-    area2 = w * h
-    x_overlap = max(0, min(x12, x22) - max(x11, x21))
-    y_overlap = max(0, min(y12, y22) - max(y11, y21))
-    overlapArea = x_overlap * y_overlap
-    return overlapArea, overlapArea/area1, overlapArea/area2
-
-
 class SigHandler_mpcam:
-    def __init__(self, event_stopped, logger):
+    def __init__(self, logger):
         self.logger = logger
-        self.event_stopped = event_stopped
 
     def sighandler_mpcam(self, a, b):
-        self.event_stopped.set()
-        self.logger.debug(whoami() + "set event_stopped = True")
+        global TERMINATED
+        TERMINATED = True
+
 
 class Detection:
     def __init__(self, id, frame, t, rect, descr, cd, ca):
@@ -88,7 +73,8 @@ class NewMatcherThread(Thread):
         self.HIST = 800 + (5 - self.MOG2SENS) * 199
         self.KERNEL2 = cv2.getStructuringElement(cv2.MORPH_RECT, (24, 24))
         self.NIGHTMODE = False
-        self.setFGBGMOG2()
+        # self.setFGBG_KNN()
+        self.setFGBG_CNT()
         self.running = False
         self.startup = True
         self.ret = False
@@ -128,10 +114,6 @@ class NewMatcherThread(Thread):
                         ret = self.CAP.grab()
                         if ret:
                             self.frame_grabbed.set()
-                    #with self.lock:                        
-                    #    ret, frame = self.CAP.read()
-                    #if ret:
-                    #    self.queue.put(frame)
                 except Exception as e:
                     self.logger.error(whoami() + "Cannot grab frame for " + self.NAME + ": " + str(e))
                     ret = False
@@ -146,7 +128,7 @@ class NewMatcherThread(Thread):
             if self.CAP:
                 self.CAP.release()    
 
-    def setFGBGMOG2(self):
+    def setFGBG_KNN(self):
         ms = self.MOG2SENS
         if not self.NIGHTMODE:
             hist = int(800 + (5 - ms) * 100)
@@ -158,6 +140,11 @@ class NewMatcherThread(Thread):
         self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, dist2Threshold=vart, detectShadows=True)
         return
 
+    def setFGBG_CNT(self):
+        self.logger.debug(whoami() + "Creating BackgroundSubtractorCNT")
+        self.FGBG = cv2.bgsegm.createBackgroundSubtractorCNT()
+        return
+
 
     def get_caption_and_process(self):
         ret = self.frame_grabbed.wait(2)
@@ -165,15 +152,6 @@ class NewMatcherThread(Thread):
             with self.lock:
                 ret, frame = self.CAP.retrieve()
                 self.frame_grabbed.clear()                
-        #while True and self.running:
-        #    try:
-        #        frame = self.queue.get_nowait()
-        #        ret = True
-        #    except queue.Empty:
-        #        if ret:
-        #            break
-        #    time.sleep(0.01)
-
         if not ret:
             return False, None, None, time.time()
         try:
@@ -193,6 +171,7 @@ class NewMatcherThread(Thread):
 def run_cam(cfg, child_pipe, mp_loggerqueue):
     global CNAME
     global CVMAJOR
+    global TERMINATED
 
     cv2.setNumThreads(1)
 
@@ -205,7 +184,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     logger.info(whoami() + "starting ...")
 
     event_stopped = threading.Event()
-    sh = SigHandler_mpcam(event_stopped, logger)
+    sh = SigHandler_mpcam(logger)
     signal.signal(signal.SIGINT, sh.sighandler_mpcam)
     signal.signal(signal.SIGTERM, sh.sighandler_mpcam)
 
@@ -219,11 +198,12 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
         logger.error(whoami() + "cam is not working, aborting ...")
         sys.exit()
 
-    waitnext = 0.005
+    waitnext = 0.01
+    waitnext_delta = 0.01
     oldt = time.time()
     MAXFPS = 8
 
-    while not event_stopped.is_set():
+    while not TERMINATED:
         try:
             cmd = child_pipe.recv()
             if cmd == "stop":
@@ -236,12 +216,11 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
                     child_pipe.send(exp0)
                     fps = 1 / (t0 - oldt)
                     if fps > MAXFPS:
-                        waitnext += 0.005
-                    elif fps < MAXFPS and waitnext > 0.005:
-                        waitnext -= 0.005
+                        waitnext += waitnext_delta
+                    elif fps < MAXFPS and waitnext > waitnext_delta:
+                        waitnext -= waitnext_delta
                     oldt = t0
                     time.sleep(waitnext)
-                    # print(fps, waitnext)
                 else:
                     logger.error(whoami() + "Couldn't capture frame in main loop!")
                     exp0 = (ret, None, [], None)
