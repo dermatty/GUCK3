@@ -83,7 +83,7 @@ class TorchResNet:
            (len(camera.rects) == 0 or self.RESNETMODEL is None):
             return []
         try:
-            self.logger.debug(whoami() + "performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
+            self.logger.debug(whoami() + camera.cname + ": performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
             img0 = self.image_loader(camera.frame.copy())
 
             pred = self.RESNETMODEL([img0])[0]
@@ -108,23 +108,24 @@ class TorchResNet:
                     r1 = (x1_det, y1_det, x2_det, y2_det)
                     overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
                     if (ratio1 > 0.5 or ratio2 > 0.5):
-                        self.logger.info(" Human detected with score " + str(scores[i]) + " and overlap " + str(ratio1) + " / " + str(ratio2))
+                        self.logger.info(whoami() + camera.cname + ": Human detected with score " + str(scores[i]) + " and overlap " + str(ratio1) + " / " + str(ratio2))
                         cnn_classified_list.append((x1_det, y1_det, x_det_w, y_det_h))
-                        self.logger.info(whoami() + "!! CLASSIFIED !!")
+                        self.logger.info(whoami() + camera.cname + "!! CLASSIFIED !!")
                     else:
-                        self.logger.info("Detection refused with score " + str(scores[i]) + " and ratios " + str(ratio1) + " / " + str(ratio2) + " !")
+                        self.logger.info(whoami() + camera.cname + ": Detection refused with score " + str(scores[i]) + " and ratios " + str(ratio1) + " / " + str(ratio2) + " !")
             camera.cnn_classified_list = cnn_classified_list
         except Exception as e:
-            self.logger.error(whoami() + str(e) + ": ResNet classification error!")
+            self.logger.error(whoami() + str(e) + camera.cname + ": ResNet classification error!")
             camera.cnn_classified_list = []
         return
 
 
 class Camera(Thread):
-    def __init__(self, ccfg, dirs, mp_loggerqueue, logger):
+    def __init__(self, ccfg, dirs, options, mp_loggerqueue, logger):
         Thread.__init__(self)
         self.daemon = True
         self.ccfg = ccfg
+        self.options = options
         self.parent_pipe, self.child_pipe = mp.Pipe()
         self.mpp = None
         self.outvideo = None
@@ -222,7 +223,7 @@ class Camera(Thread):
     def startup_cam(self):
         if not self.active or not self.isok:
             return None
-        self.mpp = mp.Process(target=mpcam.run_cam, args=(self.ccfg, self.child_pipe, self.mp_loggerqueue, ))
+        self.mpp = mp.Process(target=mpcam.run_cam, args=(self.ccfg, self.options, self.child_pipe, self.mp_loggerqueue, ))
         self.mpp.start()
         try:
             self.parent_pipe.send("query_cam_status")
@@ -426,7 +427,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
     options = cfgr.get_options()
     cameras = []
     for c in camera_config:
-        camera = Camera(c, dirs, mp_loggerqueue, logger)
+        camera = Camera(c, dirs, options, mp_loggerqueue, logger)
         cameras.append(camera)
 
     startup_cams(cameras)

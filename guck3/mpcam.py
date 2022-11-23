@@ -60,9 +60,10 @@ class Detection:
 
 
 class NewMatcherThread(Thread):
-    def __init__(self, cfg, logger):
+    def __init__(self, cfg, options, logger):
         Thread.__init__(self)
         self.lock = threading.Lock()
+        self.options = options
         self.logger = logger
         self.SURL = cfg["stream_url"]
         self.NAME = cfg["name"]
@@ -73,14 +74,34 @@ class NewMatcherThread(Thread):
         self.HIST = 800 + (5 - self.MOG2SENS) * 199
         self.KERNEL2 = cv2.getStructuringElement(cv2.MORPH_RECT, (24, 24))
         self.NIGHTMODE = False
-        # self.setFGBG_KNN()
-        self.setFGBG_CNT()
         self.running = False
         self.startup = True
         self.ret = False
         self.frame = None
         self.queue = queue.Queue()
         self.frame_grabbed = threading.Event()
+        # get target_fps
+        try:
+            self.target_fps = int(self.options["target_fps"])
+            if self.target_fps < 1:
+                self.target_fps = 1
+        except Exception as e:
+            self.target_fps = 8
+        self.logger.debug(whoami() + "Setting target_fps to " + str(self.target_fps))
+        # get bgsubtractor
+        try:
+            self.bgsubtractor = self.options["bgsubtractor"]
+            if self.bgsubtractor not in ["MOG2", "KNN", "CNT"]:
+                self.bgsubtractor = "KNN"
+        except:
+            self.bgsubtractor = "KNN"
+        self.logger.debug(whoami() + "Setting background subtractor to " + self.bgsubtractor)
+        if self.bgsubtractor == "KNN":
+            self.setFGBG_KNN()
+        elif self.bgsubtractor == "CNT":
+            self.setFGBG_CNT()
+        elif self.bgsubtractor == "MOG2":
+            self.setFGBG_MOG2()
 
     def OpenVideoCapture(self):
         ret = False
@@ -142,7 +163,12 @@ class NewMatcherThread(Thread):
 
     def setFGBG_CNT(self):
         self.logger.debug(whoami() + "Creating BackgroundSubtractorCNT")
-        self.FGBG = cv2.bgsegm.createBackgroundSubtractorCNT()
+        self.FGBG = cv2.bgsegm.createBackgroundSubtractorCNT(minPixelStability=self.target_fps, useHistory=True, maxPixelStability=self.target_fps*60)
+        return
+
+    def setFGBG_MOG2(self):
+        self.logger.debug(whoami() + "Creating BackgroundSubtractorMOG2")
+        self.FGBG = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
         return
 
 
@@ -168,7 +194,7 @@ class NewMatcherThread(Thread):
             self.logger.warning(whoami() + str(e))
             return False, None, None, time.time()
         
-def run_cam(cfg, child_pipe, mp_loggerqueue):
+def run_cam(cfg, options, child_pipe, mp_loggerqueue):
     global CNAME
     global CVMAJOR
     global TERMINATED
@@ -188,7 +214,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     signal.signal(signal.SIGINT, sh.sighandler_mpcam)
     signal.signal(signal.SIGTERM, sh.sighandler_mpcam)
 
-    tm = NewMatcherThread(cfg, logger)
+    tm = NewMatcherThread(cfg, options, logger)
     tm.start()
     while tm.startup:
         time.sleep(0.03)
@@ -201,7 +227,7 @@ def run_cam(cfg, child_pipe, mp_loggerqueue):
     waitnext = 0.01
     waitnext_delta = 0.01
     oldt = time.time()
-    MAXFPS = 8
+    MAXFPS = tm.target_fps
 
     while not TERMINATED:
         try:
