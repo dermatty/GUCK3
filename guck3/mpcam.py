@@ -153,12 +153,10 @@ class NewMatcherThread(Thread):
         ms = self.MOG2SENS
         if not self.NIGHTMODE:
             hist = int(800 + (5 - ms) * 100)
-            vart = int(1500 + (5 - ms) * 250)
         else:
             hist = int(500 + (5 - ms) * 70)
-            vart = int(400 + (5 - ms) * 60)
         self.logger.debug(whoami() + "Creating BackgroundSubtractorKNN(history=" + str(hist) + ", dist2Threshold=" + str(vart) + ", detectShadows=True)")
-        self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, dist2Threshold=vart, detectShadows=True)
+        self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, detectShadows=True)
         return
 
     def setFGBG_CNT(self):
@@ -167,8 +165,13 @@ class NewMatcherThread(Thread):
         return
 
     def setFGBG_MOG2(self):
+        ms = self.MOG2SENS
+        if not self.NIGHTMODE:
+            hist = int(800 + (5 - ms) * 100)
+        else:
+            hist = int(500 + (5 - ms) * 70)
         self.logger.debug(whoami() + "Creating BackgroundSubtractorMOG2")
-        self.FGBG = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
+        self.FGBG = cv2.createBackgroundSubtractorMOG2(history=hist, detectShadows=True)
         return
 
 

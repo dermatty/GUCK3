@@ -83,7 +83,8 @@ class TorchResNet:
            (len(camera.rects) == 0 or self.RESNETMODEL is None):
             return []
         try:
-            self.logger.debug(whoami() + camera.cname + ": performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
+            t0 = time.time()
+            self.logger.debug(whoami() + "-------- >>> " + camera.cname + ": performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
             img0 = self.image_loader(camera.frame.copy())
 
             pred = self.RESNETMODEL([img0])[0]
@@ -108,12 +109,14 @@ class TorchResNet:
                     r1 = (x1_det, y1_det, x2_det, y2_det)
                     overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
                     if (ratio1 > 0.5 or ratio2 > 0.5):
-                        self.logger.info(whoami() + camera.cname + ": Human detected with score " + str(scores[i]) + " and overlap " + str(ratio1) + " / " + str(ratio2))
+                        self.logger.info(whoami() + camera.cname + ": CLASSIFIED - human detected with score " + str(scores[i]) + " and overlap " + str(ratio1) + " / " + str(ratio2))
                         cnn_classified_list.append((x1_det, y1_det, x_det_w, y_det_h))
-                        self.logger.info(whoami() + camera.cname + "!! CLASSIFIED !!")
                     else:
                         self.logger.info(whoami() + camera.cname + ": Detection refused with score " + str(scores[i]) + " and ratios " + str(ratio1) + " / " + str(ratio2) + " !")
+            if cnn_classified_list == []:
+                self.logger.info(whoami() + camera.cname + ": No human detected!")
             camera.cnn_classified_list = cnn_classified_list
+            self.logger.debug(whoami() + "<<< ---------- " + camera.cname + ": Classification took " + str(time.time() - t0) + " seconds!")
         except Exception as e:
             self.logger.error(whoami() + str(e) + camera.cname + ": ResNet classification error!")
             camera.cnn_classified_list = []
@@ -466,8 +469,10 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
             if c.active and c.isok:
                 try:
                     if c.newframe:
-                        torchresnet.get_cnn_classification(c)
-                        c.draw_detections(cnn=True)
+                        # if lag in frames do not do any cnn class.
+                        if time.time() - c.tx < 2.5:
+                            torchresnet.get_cnn_classification(c)
+                            c.draw_detections(cnn=True)
                         mainparams = (c.cname, c.frame, c.get_fps(), c.isok, c.active, c.tx)
                         if showframes:
                             cv2.imshow(c.cname, c.frame)
