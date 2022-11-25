@@ -470,7 +470,7 @@ def run_cameras(pd_outqueue, pd_inqueue, dirs, cfg, mp_loggerqueue):
                 try:
                     if c.newframe:
                         # if lag in frames do not do any cnn class.
-                        if time.time() - c.tx < 2.5:
+                        if time.time() - c.tx < 2:
                             torchresnet.get_cnn_classification(c)
                             c.draw_detections(cnn=True)
                         mainparams = (c.cname, c.frame, c.get_fps(), c.isok, c.active, c.tx)

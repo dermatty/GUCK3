@@ -155,13 +155,13 @@ class NewMatcherThread(Thread):
             hist = int(800 + (5 - ms) * 100)
         else:
             hist = int(500 + (5 - ms) * 70)
-        self.logger.debug(whoami() + "Creating BackgroundSubtractorKNN(history=" + str(hist) + ", dist2Threshold=" + str(vart) + ", detectShadows=True)")
-        self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, detectShadows=True)
+        self.FGBG = cv2.createBackgroundSubtractorKNN(history=hist, detectShadows=False)
+        self.logger.info(whoami() + "Created BackgroundSubtractorKNN")
         return
 
     def setFGBG_CNT(self):
-        self.logger.debug(whoami() + "Creating BackgroundSubtractorCNT")
-        self.FGBG = cv2.bgsegm.createBackgroundSubtractorCNT(minPixelStability=self.target_fps, useHistory=True, maxPixelStability=self.target_fps*60)
+        self.FGBG = cv2.bgsegm.createBackgroundSubtractorCNT(minPixelStability=self.target_fps, useHistory=True, maxPixelStability=self.target_fps*60, detectShadows=False)
+        self.logger.info(whoami() + "Created BackgroundSubtractorCNT")
         return
 
     def setFGBG_MOG2(self):
@@ -170,8 +170,8 @@ class NewMatcherThread(Thread):
             hist = int(800 + (5 - ms) * 100)
         else:
             hist = int(500 + (5 - ms) * 70)
-        self.logger.debug(whoami() + "Creating BackgroundSubtractorMOG2")
-        self.FGBG = cv2.createBackgroundSubtractorMOG2(history=hist, detectShadows=True)
+        self.FGBG = cv2.createBackgroundSubtractorMOG2(history=hist, detectShadows=False)
+        self.logger.info(whoami() + "Created BackgroundSubtractorMOG2")
         return
 
 
