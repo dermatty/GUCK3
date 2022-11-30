@@ -80,6 +80,7 @@ class NewMatcherThread(Thread):
         self.frame = None
         self.queue = queue.Queue()
         self.frame_grabbed = threading.Event()
+        self.NO_GPUS = 0
         # get target_fps
         try:
             self.target_fps = int(self.options["target_fps"])
@@ -111,6 +112,7 @@ class NewMatcherThread(Thread):
             if not self.CAP:
                try:
                   self.CAP = cv2.VideoCapture(self.SURL, cv2.CAP_FFMPEG)
+                  ret, frame = self.CAP.read()
                   self.YMAX0, self.XMAX0 = frame.shape[:2]
                except:
                   pass
@@ -164,16 +166,36 @@ class NewMatcherThread(Thread):
         self.logger.info(whoami() + "Created BackgroundSubtractorCNT")
         return
 
+    # MOG2 is on GPU if possible
     def setFGBG_MOG2(self):
+        try:
+            self.NO_GPUS = cv2.cuda.getCudaEnabledDeviceCount()
+        except Exception:
+            self.NO_GPUS = 0
+        # no GPU -> MOG2 on CPU
+        if self.NO_GPUS == 0:
+            self.setMOG2_ON_CPU()
+        # on GPU (with CPU as fallback)
+        else:
+            try:
+                self.FGBG_GPU = cv2.cuda.createBackgroundSubtractorMOG2()
+                self.CUDA_STREAM_0 = cv2.cuda_Stream()
+                self.FRAME_CUDA = None
+                self.logger.info(whoami() + "Created BackgroundSubtractorMOG2 on GPU")
+            except Exception as e:
+                self.NO_GPUS = 0
+                self.setMOG2_ON_CPU()
+                self.logger.warning(whoami() + "Created BackgroundSubtractorMOG2 on CPU, GPU setup failed!")
+        return
+
+    def setMOG2_ON_CPU(self):
         ms = self.MOG2SENS
         if not self.NIGHTMODE:
             hist = int(800 + (5 - ms) * 100)
         else:
             hist = int(500 + (5 - ms) * 70)
         self.FGBG = cv2.createBackgroundSubtractorMOG2(history=hist, detectShadows=False)
-        self.logger.info(whoami() + "Created BackgroundSubtractorMOG2")
-        return
-
+        self.logger.info(whoami() + "Created BackgroundSubtractorMOG2 on CPU")
 
     def get_caption_and_process(self):
         ret = self.frame_grabbed.wait(2)
@@ -183,19 +205,42 @@ class NewMatcherThread(Thread):
                 self.frame_grabbed.clear()                
         if not ret:
             return False, None, None, time.time()
+        # if MOG2/GPU
+        if self.NO_GPUS > 0 :
+            try:
+                if not self.FRAME_CUDA:    #  ifFRAME_CUDA not init, do it now
+                    self.FRAME_CUDA = cv2.cuda_GpuMat()
+                self.FRAME_CUDA.upload(frame)                
+                self.FRAME_CUDA = cv2.cuda.cvtColor(self.FRAME_CUDA, cv2.COLOR_RGB2BGR)
+                self.FRAME_CUDA = self.FGBG_GPU.apply(self.FRAME_CUDA, 0.05, self.CUDA_STREAM_0)
+                self.CUDA_STREAM_0.waitForCompletion()
+                fggray = self.FRAME_CUDA.download()
+            except Exception as e:
+                self.logger.warning(whoami() + str(e))
+                return False, None, None, time.time()
+        # else if on CPU
+        else:
+            try:
+               gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+               fggray = self.FGBG.apply(gray, 1 / self.HIST)
+            except Exception as e:
+                self.logger.warning(whoami() + str(e))
+                return False, None, None, time.time()
+        
+        # all the other stuff besides bgsub is on cpu!!
         try:
-           gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-           fggray = self.FGBG.apply(gray, 1 / self.HIST)
-           fggray = cv2.medianBlur(fggray, 5)
-           edged = auto_canny(fggray)
-           closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, self.KERNEL2)
-           cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-           cnts0 = [cv2.boundingRect(c) for c in cnts]
-           rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
-           return ret, rects, frame, time.time()
+            fggray = cv2.medianBlur(fggray, 5)
+            edged = auto_canny(fggray)
+            closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, self.KERNEL2)
+            cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cnts0 = [cv2.boundingRect(c) for c in cnts]
+            rects = [(x, y, w, h) for x, y, w, h in cnts0 if w * h > self.MINAREA]
+            return ret, rects, frame, time.time()
         except Exception as e:
             self.logger.warning(whoami() + str(e))
             return False, None, None, time.time()
+
+
         
 def run_cam(cfg, options, child_pipe, mp_loggerqueue):
     global CNAME
