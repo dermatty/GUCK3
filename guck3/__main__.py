@@ -545,7 +545,7 @@ def run(startmode="systemd"):
                     try:
                         logger.info(whoami() + "received detection for " + c_cname)
                         for c in commlist:
-                            c.send_message_all(time.strftime("%d-%m-%Y %H:%M:%S") + ": Human detected @ " + c_cname + "!")
+                            c.send_message_all(time.strftime("%d-%m-%Y %H:%M:%S") + ": Object detected @ " + c_cname + "!")
                         # save photo
                         datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
                         short_photo_name = c_cname + "_" + datestr + ".jpg"

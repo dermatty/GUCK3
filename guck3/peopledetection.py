@@ -49,7 +49,9 @@ class TorchResNet:
             warnings.simplefilter("ignore")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             try:
-                self.RESNETMODEL = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).to(self.device)
+                self.weights = torchvision.models.detection.FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.DEFAULT
+                self.RESNETMODEL = torchvision.models.detection.fasterrcnn_mobilenet_v3_large_320_fpn(weights=self.weights).to(self.device)
+                #self.RESNETMODEL = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).to(self.device)
                 self.RESNETMODEL.eval()
                 self.active = True
                 self.logger.info(whoami() + "Torchvision Resnet initialized!")
@@ -85,36 +87,54 @@ class TorchResNet:
         try:
             t0 = time.time()
             self.logger.debug(whoami() + "-------- >>> " + camera.cname + ": performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
-            img0 = self.image_loader(camera.frame.copy())
+            
+            # get min & max value from rects
+            YMAX0, XMAX0 = camera.frame.shape[:2]
+            x0 = XMAX0
+            y0 = YMAX0
+            x1 = 0
+            y1 = 0
+            for x, y, w, h in camera.rects:
+                if x < x0:
+                    x0 = x
+                if x + w > x1:
+                    x1 = x + w
+                if y < y0:
+                    y0 = y
+                if y + w > y1:
+                    y1 = y + h
+            x0 = max(int(x0 - XMAX0 * 0.05), 0)
+            x01 = min(int(x1 + XMAX0 * 0.05), XMAX0)
+            y0 = max(int(y0 - YMAX0 * 0.05), 0)
+            y01 = min(int(y1 + YMAX0 * 0.05), YMAX0)
 
+            # crop frame and run cnn
+            frame = camera.frame.copy()
+            frame = frame[y0:y01, x0:x01]
+            img0 = self.image_loader(frame)
             pred = self.RESNETMODEL([img0])[0]
-
             boxes = pred["boxes"].to("cpu").tolist()
             labels = pred["labels"].to("cpu").tolist()
             scores = pred["scores"].to("cpu").tolist()
             
             cnn_classified_list = []
-            for x, y, w, h in camera.rects:
-                r2 = (x, y, x + w, y + h)
-                for i, label in enumerate(labels):
-                    if label != 1 or scores[i] < 0.5:
-                        continue
-                    box = boxes[i]
-                    x1_det = int(box[0])
-                    y1_det = int(box[1])
-                    x2_det = int(box[2])
-                    y2_det = int(box[3])
-                    x_det_w = x2_det - x1_det
-                    y_det_h = y2_det - y1_det
-                    r1 = (x1_det, y1_det, x2_det, y2_det)
-                    overlapArea, ratio1, ratio2 = self.overlap_rects(r1, r2)
-                    if (ratio1 > 0.5 or ratio2 > 0.5):
-                        self.logger.info(whoami() + camera.cname + ": CLASSIFIED - human detected with score " + str(scores[i]) + " and overlap " + str(ratio1) + " / " + str(ratio2))
-                        cnn_classified_list.append((x1_det, y1_det, x_det_w, y_det_h))
-                    else:
-                        self.logger.info(whoami() + camera.cname + ": Detection refused with score " + str(scores[i]) + " and ratios " + str(ratio1) + " / " + str(ratio2) + " !")
+            for i, label in enumerate(labels):
+                score = scores[i]
+                category_name = self.weights.meta["categories"][label]
+                if score < 0.8 or category_name not in ["person", "dog", "cat"]:
+                    self.logger.info(whoami() + camera.cname + ": Detection refused with score " + str(score))
+                    continue
+                box = boxes[i]
+                x1_det = int(box[0]) + x0
+                y1_det = int(box[1]) + y0
+                x2_det = int(box[2]) + x0
+                y2_det = int(box[3]) + y0
+                x_det_w = x2_det - x1_det
+                y_det_h = y2_det - y1_det
+                self.logger.info(whoami() + camera.cname + ": CLASSIFIED - " + category_name + " detected with score " + str(score))
+                cnn_classified_list.append((x1_det, y1_det, x_det_w, y_det_h, category_name))
             if cnn_classified_list == []:
-                self.logger.info(whoami() + camera.cname + ": No human detected!")
+                self.logger.info(whoami() + camera.cname + ": No object detected!")
             camera.cnn_classified_list = cnn_classified_list
             self.logger.debug(whoami() + "<<< ---------- " + camera.cname + ": Classification took " + str(time.time() - t0) + " seconds!")
         except Exception as e:
@@ -331,14 +351,14 @@ class Camera(Thread):
         if self.frame is not None:
             ymax0, xmax0 = self.frame.shape[:2]
             # draw detections
-            for x, y, w, h in rects:
+            for x, y, w, h, category_name in rects:
                 x1 = max(0, x)
                 y1 = max(0, y)
                 x2 = min(x + w, xmax0)
                 y2 = min(y + h, ymax0)
-                outstr = "DETECTION!"
+                outstr = category_name
                 cv2.rectangle(self.frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.putText(self.frame, outstr, (x1 + 3, y2 - 10), cv2.FONT_HERSHEY_DUPLEX, 0.3, (0, 255, 0))
+                cv2.putText(self.frame, outstr, (x1 + 4, y2 - 14), cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 0, 0),thickness=1)
 
     def start_recording(self):
         if not self.active or not self.isok:

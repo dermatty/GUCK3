@@ -210,10 +210,15 @@ class NewMatcherThread(Thread):
             try:
                 if not self.FRAME_CUDA:    #  ifFRAME_CUDA not init, do it now
                     self.FRAME_CUDA = cv2.cuda_GpuMat()
+                    # self.median_cuda = cv2.cuda.createMedianFilter(cv2.CV_8U, 3);
+                    #kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (24, 24))
+                    #self.morphology_ex_cuda = cv2.cuda.createMorphologyFilter(cv2.MORPH_CLOSE, self.FRAME_CUDA.type(), kernel)
                 self.FRAME_CUDA.upload(frame)                
                 self.FRAME_CUDA = cv2.cuda.cvtColor(self.FRAME_CUDA, cv2.COLOR_RGB2BGR)
                 self.FRAME_CUDA = self.FGBG_GPU.apply(self.FRAME_CUDA, 0.05, self.CUDA_STREAM_0)
                 self.CUDA_STREAM_0.waitForCompletion()
+                # self.median_cuda.apply(self.FRAME_CUDA, self.FRAME_CUDA, self.CUDA_STREAM_0)
+                #self.CUDA_STREAM_0.waitForCompletion()
                 fggray = self.FRAME_CUDA.download()
             except Exception as e:
                 self.logger.warning(whoami() + str(e))
