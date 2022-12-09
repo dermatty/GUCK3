@@ -17,6 +17,7 @@ import logging
 from datetime import datetime
 from threading import Thread, Lock
 import warnings
+from shapely.geometry import Polygon
 
 # todo:
 #    each camera own thread which gets data from camera and does peopledetection
@@ -86,9 +87,10 @@ class TorchResNet:
             return []
         try:
             t0 = time.time()
-            self.logger.debug(whoami() + "-------- >>> " + camera.cname + ": performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
+            #self.logger.debug(whoami() + "-------- >>> " + camera.cname + ": performing resnet classification with " + str(len(camera.rects)) + " opencv detections ...")
             
             # get min & max value from rects
+            camera.cnn_classified_list = []
             YMAX0, XMAX0 = camera.frame.shape[:2]
             x0 = XMAX0
             y0 = YMAX0
@@ -103,40 +105,34 @@ class TorchResNet:
                     y0 = y
                 if y + w > y1:
                     y1 = y + h
-            x0 = max(int(x0 - XMAX0 * 0.05), 0)
-            x01 = min(int(x1 + XMAX0 * 0.05), XMAX0)
-            y0 = max(int(y0 - YMAX0 * 0.05), 0)
-            y01 = min(int(y1 + YMAX0 * 0.05), YMAX0)
+            x0 = max(int(x0 - XMAX0 * 0.1), 0)
+            x01 = min(int(x1 + XMAX0 * 0.1), XMAX0)
+            y0 = max(int(y0 - YMAX0 * 0.1), 0)
+            y01 = min(int(y1 + YMAX0 * 0.1), YMAX0)
 
             # crop frame and run cnn
             frame = camera.frame.copy()
             frame = frame[y0:y01, x0:x01]
             img0 = self.image_loader(frame)
             pred = self.RESNETMODEL([img0])[0]
-            boxes = pred["boxes"].to("cpu").tolist()
-            labels = pred["labels"].to("cpu").tolist()
-            scores = pred["scores"].to("cpu").tolist()
+            boxes0 = pred["boxes"].to("cpu").tolist()
+            labels0 = pred["labels"].to("cpu").tolist()
+            scores0 = pred["scores"].to("cpu").tolist()
             
-            cnn_classified_list = []
-            for i, label in enumerate(labels):
-                score = scores[i]
-                category_name = self.weights.meta["categories"][label]
-                if score < 0.8 or category_name not in ["person", "dog", "cat"]:
-                    self.logger.info(whoami() + camera.cname + ": Detection refused with score " + str(score))
-                    continue
-                box = boxes[i]
-                x1_det = int(box[0]) + x0
-                y1_det = int(box[1]) + y0
-                x2_det = int(box[2]) + x0
-                y2_det = int(box[3]) + y0
-                x_det_w = x2_det - x1_det
-                y_det_h = y2_det - y1_det
-                self.logger.info(whoami() + camera.cname + ": CLASSIFIED - " + category_name + " detected with score " + str(score))
-                cnn_classified_list.append((x1_det, y1_det, x_det_w, y_det_h, category_name))
-            if cnn_classified_list == []:
-                self.logger.info(whoami() + camera.cname + ": No object detected!")
-            camera.cnn_classified_list = cnn_classified_list
-            self.logger.debug(whoami() + "<<< ---------- " + camera.cname + ": Classification took " + str(time.time() - t0) + " seconds!")
+            # only keep a few categories
+            allowed_categories = ["person", "dog", "cat"]
+            allowed_idx = [i for i, label in enumerate(labels0) if self.weights.meta["categories"][label] in allowed_categories and scores0[i] > 0.85]
+
+            # perform nms (remove useless boxes)
+            boxes1 = torch.tensor([[boxes0[i][0]+x0, boxes0[i][1]+y0, boxes0[i][2]+x0, boxes0[i][3]+y0] for i in allowed_idx])
+            labels1 = torch.tensor([labels0[i] for i in allowed_idx])
+            scores1 = torch.tensor([scores0[i] for i in allowed_idx])
+            kept_idx = torchvision.ops.batched_nms(boxes1, scores1, labels1, 0.5)
+
+            boxes = [[int(box[0]), int(box[1]), int(box[2]), int(box[3])] for i, box in enumerate(boxes1.tolist()) if torch.tensor(i) in kept_idx]
+            labels = [self.weights.meta["categories"][label] for i, label in enumerate(labels1.tolist()) if torch.tensor(i) in kept_idx]
+                        
+            camera.cnn_classified_list = [(box[0], box[1], box[2]-box[0], box[3]-box[1], labels[i]) for i, box in enumerate(boxes)]
         except Exception as e:
             self.logger.error(whoami() + str(e) + camera.cname + ": ResNet classification error!")
             camera.cnn_classified_list = []
