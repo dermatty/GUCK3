@@ -60,20 +60,6 @@ class TorchResNet:
                 self.logger.error(whoami() + str(e) + ": cannot init Torchvision Resnet!")
                 self.RESNETMODEL = None
 
-    def overlap_rects(self, r1, r2):
-        x11, y11, x12, y12 = r1
-        w = abs(x12 - x11)
-        h = abs(y12 - y11)
-        area1 = w * h
-        x21, y21, x22, y22 = r2
-        w = abs(x22 - x21)
-        h = abs(y22 - y21)
-        area2 = w * h
-        x_overlap = max(0, min(x12, x22) - max(x11, x21))
-        y_overlap = max(0, min(y12, y22) - max(y11, y21))
-        overlapArea = x_overlap * y_overlap
-        return overlapArea, overlapArea/area1, overlapArea/area2
-
     def image_loader(self, img_cv2):
         img_cv20 = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2RGB)
         img = PIL.Image.fromarray(img_cv20)

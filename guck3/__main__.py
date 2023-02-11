@@ -13,7 +13,12 @@ import sys
 import multiprocessing as mp
 import time
 import queue
-from telegram.ext import Updater, MessageHandler, Filters
+from telegram.ext import Updater, MessageHandler
+import telegram
+if telegram.__version__ == "20.1":
+    from telegram.ext import filters
+else:
+    from telegram.ext import Filters
 from threading import Thread
 import cv2
 from guck3 import webflask
@@ -285,7 +290,10 @@ class TelegramThread:
             self.updater = Updater(self.token, use_context=True)
             self.dp = self.updater.dispatcher
             self.bot = self.updater.bot
-            self.dp.add_handler(MessageHandler(Filters.text, self.handler))
+            if telegram.__version__ == "20.1":
+                self.dp.add_handler(MessageHandler(filters.text, self.handler))
+            else:
+                self.dp.add_handler(MessageHandler(Filters.text, self.handler))
             self.updater.start_polling()
             self.running = True
             self.send_message_all("GUCK3 telegram bot started!")
