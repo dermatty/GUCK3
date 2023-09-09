@@ -32,40 +32,10 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
     bot0 = bot.lower()
     if bot0 not in ["tgram", "kbd", "wf"]:
         return None
-
+    reply = ""
     if msg == "start":
         state_data.MAINQUEUE.put(("start", bot0))
         reply = "starting GUCK3 people detection ..."
-    elif msg.startswith("modemrestart"):
-        try:
-            nettarget = (msg.split("modemrestart")[-1]).lstrip()
-            nettarget_if = None
-            for if0 in state_data.NET_CONFIG["interfaces"]:
-                if nettarget == if0["name"] or nettarget == if0["pfsense_name"]:
-                    nettarget_if = if0
-                    break
-            if not nettarget_if:
-                raise ValueError("target not found")
-            reply = "restarting modem " + nettarget + "... "
-            reply += modemrestart(nettarget_if)
-        except Exception as e:
-            reply = "cannot parse modemrestart target: " + str(e)
-    elif msg.startswith("ifrestart"):
-        try:
-            nettarget = (msg.split("ifrestart")[-1]).lstrip()
-            nettarget_if = None
-            for if0 in state_data.NET_CONFIG["interfaces"]:
-                if nettarget == if0["name"] or nettarget == if0["pfsense_name"]:
-                    nettarget_if = if0
-                    break
-            if not nettarget_if:
-                raise ValueError("target not found")
-            reply = "restarting interface " + nettarget + "... "
-            reply += ifrestart(state_data, nettarget_if)
-        except Exception as e:
-            reply = "cannot parse modemrestart target: " + str(e)
-    elif msg.startswith("servicerestart"):
-        reply = services_restart(state_data)
     elif msg == "photos":
         if bot0 == "tgram":
             reply = "collecting photo snapshots from all cameras ..."
@@ -84,25 +54,10 @@ def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
         else:
             reply = "exiting GUCK3!"
         state_data.MAINQUEUE.put((msg, None))
-    elif msg.replace(" ", "") == "recordon" and not state_data.DO_RECORD:
-        if not state_data.PD_ACTIVE:
-            reply = "People Detection no running, cannot start recording"
-        else:
-            state_data.PD_OUTQUEUE.put(("record on", None))
-            state_data.DO_RECORD = True
-            reply = "Recording on all cameras started!"
-    elif msg.replace(" ", "") == "recordoff" and state_data.DO_RECORD:
-        if not state_data.PD_ACTIVE:
-            reply = "PeopleDetector no running, cannot stop recording"
-        state_data.PD_OUTQUEUE.put(("record off", None))
-        state_data.DO_RECORD = False
-        reply = "Recording on all cameras stopped!"
     elif msg == "status":
         reply, _, _, _, _ = get_status(state_data)
-    elif msg == "netstatus":
-        reply = get_net_status(state_data)
     elif msg == "?" or msg == "help":
-        reply = "start|stop|exit!!|restart!!|record on/off|status|photos|netstatus|modemrestart <if>|ifrestart <if>|servicerestart"
+        reply = "start|stop|exit!!|restart!!|status|photos"
     else:
         reply = "Don't know what to do with '" + msg + "'!"
     return reply
@@ -575,24 +530,22 @@ def run(startmode="systemd"):
             for pdmsg, pdpar in pdmsglist:
                 c_cname, c_frame, _, _, _, _ = pdpar
                 state_data.CAMERADATA.append(pdpar)
-                datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
-                short_photo_name = c_cname + "_" + datestr + ".jpg"
-                photo_name = dirs["photo"] + short_photo_name
                 if pdmsg == "detection":
                     try:
                         logger.info(whoami() + "received detection for " + c_cname)
-                        # save photo
+                        datestr = datetime.datetime.now().strftime("%d%m%Y-%H:%M:%S")
+                        photo_caption = datestr + ": Object detected @ " + c_cname + "!"
+                        short_photo_name = c_cname + "_" + datestr + ".jpg"
+                        photo_name = dirs["photo"] + short_photo_name
                         wf_msglist.insert(0, photo_name)
-                    except Exception as e:
-                        logger.warning(whoami() + str(e))
-                    try:
+                        # save it to photo_dir
                         cv2.imwrite(photo_name, c_frame)
+                        # send photo
                         for c in commlist:
-                            c.send_photo(photo_name, "%d-%m-%Y %H:%M:%S" + ": Object detected @ " + c_cname + "!")
+                            c.send_photo(photo_name, photo_caption)
                         if addtl_photo_path:
                             photo_name2 = addtl_photo_path + c_cname + "_" + datestr + ".jpg"
                             cv2.imwrite(photo_name2, c_frame)
-                        logger.debug(whoami() + "saved detection photo " + photo_name)
                     except Exception as e:
                         logger.warning(whoami() + str(e))
 

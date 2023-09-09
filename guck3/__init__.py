@@ -440,7 +440,7 @@ def get_status(state_data):
                         cam_crit = False
                 ret += "\n" + cname + " " + ctstatus0 + " @ %3.1f fps" % cfps + ", (%.2f" % dt + " sec. ago)"
 
-    ret += "\n" + get_net_status(state_data)
+    # ret += "\n" + get_net_status(state_data)
 
     temp, hum = get_sens_temp()
     ret += "\n------- Sensors -------"

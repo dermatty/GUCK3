@@ -8,7 +8,7 @@ from setproctitle import setproctitle
 
 setproctitle("g3." + os.path.basename(__file__))
 
-__version__ = "3.2.3 master"
+__version__ = "3.2.4 master"
 os.environ["GUCK3_VERSION"] = __version__
 
 try:
