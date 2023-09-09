@@ -278,7 +278,7 @@ class TelegramThread(Thread):
                     for chat_id, text in rlist:
                         text = str(text)
                         self.logger.info("Received message >" + text + "<")
-                        reply = GeneralMsgHandler(text, "tgram", self.state_data, self.mp_loggerqueue)
+                        reply = GeneralMsgHandler(text.lower(), "tgram", self.state_data, self.mp_loggerqueue)
                         fg.send_message(self.token, [chat_id], reply)
                         if reply.startswith("collecting photo snapshots"):
                             imglist = get_free_photos(self.state_data.DIRS["photo"],
