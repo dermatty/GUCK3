@@ -324,8 +324,7 @@ class TelegramThread(Thread):
     def send_photo(self, photo_path, caption):
         if not self.active:
             return
-        file_opened = open(photo_path, "rb")
-        fg.send_file_as_photo(self.token, [self.chatids], file_opened, caption)
+        fg.send_filepath_as_photo(self.token, self.chatids, photo_path, caption)
 
     def get_config(self):
         t = self.cfgr.get_telegram()
