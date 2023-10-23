@@ -259,6 +259,7 @@ class TelegramThread(Thread):
             fg.receive_message(self.token)
             self.logger.info("Received answer on first getme: " + str(heartbeat_answer))
             lastt0 = time.time()
+            last_tg_cleanup = time.time()
             self.running = True
             self.heartbeatok = True
             self.logger.info(whoami() + "telegram handler/bot started!")
@@ -287,8 +288,11 @@ class TelegramThread(Thread):
                                 for photo_name in imglist:
                                     file_opened = open(photo_name, "rb")
                                     photo_name = os.path.basename(photo_name)
-                                    fg.send_file_as_photo(self.token, [chat_id], file_opened, photo_name)
-
+                                    fg.send_filepath_as_photo(self.token, [chat_id], file_opened, photo_name)
+                elif time.time() - last_tg_cleanup > 6*60*60:   # every 6h
+                    self.logger.info("clearing telegram bot chat ,,,")
+                    fg.clear_bot(self.token)
+                    last_tg_cleanup = time.time()
                 elif time.time() - lastt0 > _HEARTBEAT_FRQ * 60 or not ok:
                     self.logger.info("Sending getme - heartbeat to bot ...")
                     heartbeat_answer = fg.get_me(self.token)
