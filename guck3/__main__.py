@@ -287,12 +287,12 @@ class TelegramThread(Thread):
                         imglist = get_free_photos(self.state_data.DIRS["photo"],
                                                   self.state_data.CAMERA_CONFIG, self.logger)
                         if imglist:
-                            for photo_name in imglist:
-                                file_opened = open(photo_name, "rb")
-                                photo_name = os.path.basename(photo_name)
-                                fg.send_filepath_as_photo(self.token, [chat_id], file_opened, photo_name)
+                            for photo_path in imglist:
+                                #file_opened = open(photo_name, "rb")
+                                photo_name = os.path.basename(photo_path)
+                                fg.send_filepath_as_photo(self.token, [chat_id], photo_path, photo_name)
             elif time.time() - last_tg_cleanup > 6*60*60:   # every 6h
-                self.logger.info("clearing telegram bot chat ,,,")
+                self.logger.info("clearing telegram bot chat ...")
                 clearbot_answer = fg.clear_bot(self.token)
                 self.logger.info("Received answer on clear_bot: " + str(clearbot_answer))
                 last_tg_cleanup = time.time()

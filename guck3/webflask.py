@@ -207,11 +207,11 @@ def userlogin():
         userloginform = models.UserLoginForm(request.form)
         email = userloginform.email.data
         pw = userloginform.password.data
-        app.logger.info(whoami() + ": user trying to log in - " + email)
+        app.logger.info(whoami() + ": user trying to log in - " + str(email) + " from ip " + str(request.remote_addr))
         try:
             correct_pw = USERS[email]
         except Exception:
-            app.logger.warning(whoami() + ": user log in failed - " + email)
+            app.logger.warning(whoami() + ": user log in failed - " + str(email) + " from ip " + str(request.remote_addr))
             return redirect(url_for("index"))
         if pw == correct_pw:
             app.logger.info(whoami() + ": user logged in - " + email)
@@ -222,7 +222,7 @@ def userlogin():
             except Exception:
                 pass
             return render_template("index.html")
-        app.logger.warning(whoami() + ": user log in failed- " + email)
+        app.logger.warning(whoami() + ": user log in failed - " + str(email) + " from ip " + str(request.remote_addr))
         return redirect(url_for('index'))
 
 
