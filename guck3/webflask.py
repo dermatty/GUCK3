@@ -423,8 +423,12 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
             'capture_output': True,
             'debug': True,
             'graceful_timeout': 10,
-            'worker_class': 'gevent',
-            'workers': 1
+            "timeout": 120,
+            # 'worker_class': 'gevent',
+            'worker_class': 'gthread',
+            'workers': 3,
+            "threads": 3,
+            "worker-connections": 100
         }
         app.logger.info(whoami() + ": binding gunicorn to https!")
     except Exception:
@@ -433,8 +437,12 @@ def main(cfg, dirs, inqueue, outqueue, loggerqueue):
             'capture_output': True,
             'debug': True,
             'graceful_timeout': 10,
-            'worker_class': 'gevent',
-            'workers': 1
+            "timeout": 120,
+            #'worker_class': 'gevent',
+            'worker_class': 'gthread',
+            'workers': 3,
+            "threads": 3,
+            "worker-connections": 100
         }
         app.logger.warning(whoami() + ": binding gunicorn to http!")
     signal.signal(signal.SIGFPE, sighandler)     # nicht die feine englische / faut de mieux
