@@ -410,10 +410,13 @@ def get_status(state_data):
         gputemp_str = "0.0"
         gpuutil_str = "0.0%"
     ret += "\nGPU: " + gputemp_str + "°C" + " / " + gpuutil_str + " util."
-    if float(gputemp_str) > 70.0:
-        gpu_crit = True
-    else:
-        gpu_crit = False
+    try:
+    	if float(gputemp_str) > 70.0:
+        	gpu_crit = True
+    	else:
+        	gpu_crit = False
+    except Exception:
+    	gpu_crit = False
 
     cam_crit = False
     if state_data.PD_ACTIVE:

@@ -22,7 +22,8 @@ import fridagram as fg
 
 TERMINATED = False
 RESTART = False
-_HEARTBEAT_FRQ = 3  # heartbeat frequency in minutes
+_HEARTBEAT_FRQ = 10  # heartbeat frequency in minutes
+_CLEAR_BOT_FREQ = 6  # clear bot freq in hours
 
 
 def GeneralMsgHandler(msg, bot, state_data, mp_loggerqueue):
@@ -249,7 +250,8 @@ class TelegramThread(Thread):
               "Please press 's' + ENTER to start (fg bug)!"
         fg.send_message(self.token, self.chatids, rep)
 
-        """heartbeat_answer = fg.get_me(self.token)
+        """heartbeat_answer = fg
+        .get_me(self.token)
         if not heartbeat_answer:
             self.logger.error("Received no answer on first getme, exiting ...")
             self.running = False
@@ -266,52 +268,59 @@ class TelegramThread(Thread):
         self.heartbeatok = True
         self.logger.info(whoami() + "telegram handler/bot started!")
         while self.running:
-            self.logger.debug("starting receive_message")
-            ok, rlist, err0 = fg.receive_message(self.token)
-            self.logger.debug(
-                "received message "
-                + str(ok)
-                + " / "
-                + str(rlist)
-                + " / "
-                + str(err0)
-            )
-            if ok and rlist:
-                lastt0 = time.time()
-                for chat_id, text in rlist:
-                    text = str(text)
-                    self.logger.info("Received message >" + text + "<")
-                    reply = GeneralMsgHandler(text.lower(), "tgram", self.state_data, self.mp_loggerqueue)
-                    fg.send_message(self.token, [chat_id], reply)
-                    if reply.startswith("collecting photo snapshots"):
-                        imglist = get_free_photos(self.state_data.DIRS["photo"],
-                                                  self.state_data.CAMERA_CONFIG, self.logger)
-                        if imglist:
-                            for photo_path in imglist:
-                                #file_opened = open(photo_name, "rb")
-                                photo_name = os.path.basename(photo_path)
-                                fg.send_filepath_as_photo(self.token, [chat_id], photo_path, photo_name)
-            elif time.time() - last_tg_cleanup > 6*60*60:   # every 6h
-                self.logger.info("clearing telegram bot chat ...")
+            try:
+                self.logger.debug("starting receive_message")
+                #ok, rlist, err0 = self.receive_message()
+                ok, rlist, err0 = fg.receive_message(self.token)
+                self.logger.debug(
+                    "received message "
+                    + str(ok)
+                    + " / "
+                    + str(rlist)
+                    + " / "
+                    + str(err0)
+                )
+                if ok and rlist:
+                    lastt0 = time.time()
+                    for chat_id, text in rlist:
+                        text = str(text)
+                        self.logger.info("Received message >" + text + "<")
+                        reply = GeneralMsgHandler(text.lower(), "tgram", self.state_data, self.mp_loggerqueue)
+                        fg.send_message(self.token, [chat_id], reply)
+                        if reply.startswith("collecting photo snapshots"):
+                            imglist = get_free_photos(self.state_data.DIRS["photo"],
+                                                      self.state_data.CAMERA_CONFIG, self.logger)
+                            if imglist:
+                                for photo_path in imglist:
+                                    #file_opened = open(photo_name, "rb")
+                                    photo_name = os.path.basename(photo_path)
+                                    fg.send_filepath_as_photo(self.token, [chat_id], photo_path, photo_name)
+                elif time.time() - last_tg_cleanup > _CLEAR_BOT_FREQ*60*60:   # every 6h
+                    self.logger.info("clearing telegram bot chat ...")
+                    clearbot_answer = fg.clear_bot(self.token)
+                    self.logger.info("Received answer on clear_bot: " + str(clearbot_answer))
+                    last_tg_cleanup = time.time()
+                elif time.time() - lastt0 > _HEARTBEAT_FRQ * 60 or not ok:
+                    self.logger.info("Sending getme - heartbeat to bot ...")
+                    heartbeat_answer = fg.get_me(self.token)
+                    if not heartbeat_answer:
+                        self.logger.warning(
+                            "Received no answer on getme, trying again ..."
+                        )
+                        # self.running = False
+                        # rep = "Shutting down Dachshund on missing getme - heartbeat ..."
+                    else:
+                        self.logger.info(
+                            "Received answer on getme: " + str(heartbeat_answer)
+                        )
+                    lastt0 = time.time()
+                time.sleep(1)
+            except Exception as e:
+                self.logger.error("Telegram Thread Error: " + str(e) + ", clearing bot ...")
                 clearbot_answer = fg.clear_bot(self.token)
                 self.logger.info("Received answer on clear_bot: " + str(clearbot_answer))
                 last_tg_cleanup = time.time()
-            elif time.time() - lastt0 > _HEARTBEAT_FRQ * 60 or not ok:
-                self.logger.info("Sending getme - heartbeat to bot ...")
-                heartbeat_answer = fg.get_me(self.token)
-                if not heartbeat_answer:
-                    self.logger.warning(
-                        "Received no answer on getme, trying again ..."
-                    )
-                    # self.running = False
-                    # rep = "Shutting down Dachshund on missing getme - heartbeat ..."
-                else:
-                    self.logger.info(
-                        "Received answer on getme: " + str(heartbeat_answer)
-                    )
-                lastt0 = time.time()
-            time.sleep(0.5)
-
+        self.logger.warning("Exiting telegram thread")
         return 1
 
     def get_updates(self, token, offset=0):
@@ -328,6 +337,39 @@ class TelegramThread(Thread):
         except Exception as e:
             return {"ok": False, "result": []}
         return json.loads(answer.content)
+
+    def receive_message(self, timeout=45):
+        self.logger.debug("receive message #1")
+        try:
+            answer = requests.get(
+                f"https://api.telegram.org/bot{self.token}/getUpdates?timeout={timeout}",
+                timeout=timeout+5
+            )
+            self.logger.debug("receive message #2")
+            r = json.loads(answer.content)
+            self.logger.debug("receive message #3")
+            if r["ok"] and r["result"]:
+                rlist = [
+                    (r0["message"]["chat"]["id"], r0["message"]["text"])
+                    for r0 in r["result"]
+                ]
+                offset = int(r["result"][-1]["update_id"] + 1)
+                urlstr = (
+                    f"https://api.telegram.org/bot{self.token}/getUpdates?offset={str(offset)}"
+                )
+                _ = requests.get(urlstr)
+                self.logger.debug("receive message #4")
+                return True, rlist, ""
+            elif r["ok"] and not r["result"]:
+                self.logger.debug("receive message #5")
+                return True, [], ""
+            else:
+                self.logger.debug("receive message #6")
+                return False, [], ""
+        except Exception as e:
+            self.logger.warning("receive message error: " + str(e))
+            return False, [], str(e)
+
 
     def clear_bot(self, token):
         r = self.get_updates(token, offset=-1)
